@@ -1,0 +1,14 @@
+{
+  "_synthetic": "SYNTHETIC test fixture hand-written for Hard Drive Monitor. Not captured from a real drive.",
+  "Partitions": {
+    "DiskNumber": 1,
+    "DriveLetter": "D"
+  },
+  "Disks": {
+    "Number": 1,
+    "SerialNumber": "  ZFL0SYNTH02",
+    "FriendlyName": "ST2000DM008-2FR102",
+    "BusType": "SATA",
+    "Size": 2000398934016
+  }
+}

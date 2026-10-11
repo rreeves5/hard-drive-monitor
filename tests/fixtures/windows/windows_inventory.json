@@ -1,0 +1,106 @@
+{
+  "_synthetic": "SYNTHETIC test fixture hand-written for Hard Drive Monitor. Not captured from a real drive.",
+  "PhysicalDisks": [
+    {
+      "DeviceId": "0",
+      "FriendlyName": "Samsung SSD 970 EVO Plus 1TB",
+      "SerialNumber": "0025_3852_91B0_SYN1.",
+      "MediaType": "SSD",
+      "BusType": "NVMe",
+      "Size": 1000204886016,
+      "HealthStatus": "Healthy",
+      "OperationalStatus": "OK",
+      "FirmwareVersion": "2B2QEXM7",
+      "Reliability": {
+        "Temperature": 39,
+        "TemperatureMax": 70,
+        "Wear": 4,
+        "PowerOnHours": 6120,
+        "StartStopCycleCount": 902,
+        "ReadErrorsTotal": 0,
+        "ReadErrorsCorrected": 0,
+        "ReadErrorsUncorrected": 0,
+        "WriteErrorsTotal": 0,
+        "WriteErrorsCorrected": 0,
+        "WriteErrorsUncorrected": 0,
+        "ReadLatencyMax": 1012,
+        "WriteLatencyMax": 2210
+      }
+    },
+    {
+      "DeviceId": "1",
+      "FriendlyName": "ST3000DM001-1CH166",
+      "SerialNumber": "Z1F2SYNTH1",
+      "MediaType": "HDD",
+      "BusType": "SATA",
+      "Size": 3000592982016,
+      "HealthStatus": "Warning",
+      "OperationalStatus": "OK",
+      "FirmwareVersion": "CC27",
+      "Reliability": {
+        "Temperature": 44,
+        "TemperatureMax": 55,
+        "Wear": 0,
+        "PowerOnHours": 41877,
+        "StartStopCycleCount": 3311,
+        "ReadErrorsTotal": 912,
+        "ReadErrorsCorrected": 905,
+        "ReadErrorsUncorrected": 7,
+        "WriteErrorsTotal": 0,
+        "WriteErrorsCorrected": 0,
+        "WriteErrorsUncorrected": 0,
+        "ReadLatencyMax": 48211,
+        "WriteLatencyMax": 3021
+      }
+    },
+    {
+      "DeviceId": "2",
+      "FriendlyName": "WDC WD20EARX-00PASB0",
+      "SerialNumber": "WD-WMAZASYNTH2",
+      "MediaType": "HDD",
+      "BusType": "USB",
+      "Size": 2000398934016,
+      "HealthStatus": "Unhealthy",
+      "OperationalStatus": "Predictive Failure",
+      "FirmwareVersion": "51.0AB51",
+      "Reliability": null
+    }
+  ],
+  "Partitions": [
+    {
+      "DiskNumber": 0,
+      "DriveLetter": "C"
+    },
+    {
+      "DiskNumber": 1,
+      "DriveLetter": "D"
+    },
+    {
+      "DiskNumber": 2,
+      "DriveLetter": "G"
+    }
+  ],
+  "Disks": [
+    {
+      "Number": 0,
+      "SerialNumber": "0025_3852_91B0_SYN1.",
+      "FriendlyName": "Samsung SSD 970 EVO Plus 1TB",
+      "BusType": "NVMe",
+      "Size": 1000204886016
+    },
+    {
+      "Number": 1,
+      "SerialNumber": "Z1F2SYNTH1",
+      "FriendlyName": "ST3000DM001-1CH166",
+      "BusType": "SATA",
+      "Size": 3000592982016
+    },
+    {
+      "Number": 2,
+      "SerialNumber": "WD-WMAZASYNTH2",
+      "FriendlyName": "WDC WD20EARX-00PASB0",
+      "BusType": "USB",
+      "Size": 2000398934016
+    }
+  ]
+}

@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install package
+        run: python -m pip install .
+      - name: Unit tests (synthetic fixtures, no real drives needed)
+        run: python -m unittest discover -s tests -t . -v
+      - name: CLI smoke test
+        run: |
+          hdmon --version
+          hdmon status --from-json tests/fixtures --color never
+          hdmon install-service --dry-run
+
+  installer:
+    name: installer / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: install.sh
+        if: runner.os != 'Windows'
+        run: ./install.sh --no-sudoers
+      - name: hdmon on PATH in a fresh login shell
+        if: runner.os != 'Windows'
+        run: bash -lc 'command -v hdmon && hdmon --version && hdmon status --from-json tests/fixtures --color never'
+      - name: uninstall.sh
+        if: runner.os != 'Windows'
+        run: ./uninstall.sh --purge
+      - name: install.ps1
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\install.ps1
+      - name: hdmon on the User Path in a fresh cmd.exe
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $user = [Environment]::GetEnvironmentVariable('Path', 'User')
+          $machine = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+          $env:Path = "$machine;$user"
+          cmd /c "hdmon --version"
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          schtasks /Query /TN hard-drive-monitor
+      - name: uninstall.ps1
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\uninstall.ps1 -Purge
