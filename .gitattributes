@@ -1,0 +1,5 @@
+# Keep test fixtures and golden outputs byte-exact on every OS (no CRLF conversion on Windows)
+tests/expected/** -text
+tests/fixtures/** -text
+*.sh text eol=lf
+*.ps1 text eol=crlf
