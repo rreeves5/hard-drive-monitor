@@ -1,0 +1,18 @@
+# Cross-compile Windows x86_64 from Linux with mingw-w64 (posix thread model for std::thread):
+#   cmake -S . -B build-win -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64-x86_64.cmake -DCMAKE_BUILD_TYPE=Release
+set(CMAKE_SYSTEM_NAME Windows)
+set(CMAKE_SYSTEM_PROCESSOR x86_64)
+set(_p x86_64-w64-mingw32)
+find_program(_cxx_posix ${_p}-g++-posix)
+if(_cxx_posix)
+  set(CMAKE_C_COMPILER ${_p}-gcc-posix)
+  set(CMAKE_CXX_COMPILER ${_p}-g++-posix)
+else()
+  set(CMAKE_C_COMPILER ${_p}-gcc)
+  set(CMAKE_CXX_COMPILER ${_p}-g++)
+endif()
+set(CMAKE_RC_COMPILER ${_p}-windres)
+set(CMAKE_FIND_ROOT_PATH /usr/${_p})
+set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
+set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)

@@ -1,0 +1,41 @@
+{
+  "changes": {
+    "ST2000DM008-2FR102|ZFL0SYNTH02": [
+      {
+        "kind": "counter",
+        "metric": "reallocated_sectors",
+        "old": 120,
+        "new": 152,
+        "alert": true
+      },
+      {
+        "kind": "counter",
+        "metric": "pending_sectors",
+        "old": 16,
+        "new": 21,
+        "alert": true
+      },
+      {
+        "kind": "counter",
+        "metric": "offline_uncorrectable",
+        "old": 16,
+        "new": 19,
+        "alert": true
+      },
+      {
+        "kind": "health",
+        "metric": "health",
+        "old": 10,
+        "new": 6,
+        "alert": false
+      }
+    ]
+  },
+  "alerts": [
+    {
+      "severity": "CRITICAL",
+      "title": "Hard Drive Monitor CRITICAL: /dev/sdb ST2000DM008-2FR102",
+      "body": "reallocated sectors: 120 -> 152 (+32)\npending sectors: 16 -> 21 (+5)\noffline uncorrectable sectors: 16 -> 19 (+3)\nHealth 6%  Performance 53%  Status CRITICAL\n- 152 reallocated sectors - the drive is remapping bad spots to spare area\n- 21 pending sectors - unreadable spots waiting to be remapped; data there may already be lost\n- 19 offline uncorrectable sectors - found by the drive's own surface scan and could not be repaired\n- 3 reported uncorrectable errors - reads failed even after error correction\n- 1 command timeout - the drive stalled on operations (failing drive, cable or power)"
+    }
+  ]
+}

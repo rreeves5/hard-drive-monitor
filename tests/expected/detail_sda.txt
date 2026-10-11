@@ -1,0 +1,43 @@
+/dev/sda  WDC WD40EFRX-68N32N0
+  Serial:        WD-SYNTH00000001
+  Firmware:      82.00A82
+  Type:          HDD
+  Protocol:      ATA (smartctl -d sat)
+  Capacity:      4.0 TB
+  Rotation:      5400 rpm
+  Form factor:   3.5 inches
+  Interface:     SATA 3.0
+  Temperature:   34 C
+  Power-on:      23,456 h (2.7y)
+  Power cycles:  312
+  SMART verdict: PASSED
+  Source:        file:hdd_healthy.json
+
+  Health      ████████████████████ 100%
+  Performance ████████████████████ 100%
+  Status      OK
+
+  ATA SMART attributes
+   ID  ATTRIBUTE                VALUE  WORST  THRESH  TYPE      FAILED  RAW
+  ───  ───────────────────────  ─────  ─────  ──────  ────────  ──────  ─────
+    1  Raw_Read_Error_Rate        200    200      51  Pre-fail  -       0
+    3  Spin_Up_Time               177    175      21  Pre-fail  -       6141
+    4  Start_Stop_Count           100    100       0  Old_age   -       412
+    5  Reallocated_Sector_Ct      200    200     140  Pre-fail  -       0
+    7  Seek_Error_Rate            200    200       0  Old_age   -       0
+    9  Power_On_Hours              68     68       0  Old_age   -       23456
+   10  Spin_Retry_Count           100    253       0  Old_age   -       0
+   12  Power_Cycle_Count          100    100       0  Old_age   -       312
+  192  Power-Off_Retract_Count    200    200       0  Old_age   -       96
+  193  Load_Cycle_Count           196    196       0  Old_age   -       13020
+  194  Temperature_Celsius        116    104       0  Old_age   -       34
+  196  Reallocated_Event_Count    200    200       0  Old_age   -       0
+  197  Current_Pending_Sector     200    200       0  Old_age   -       0
+  198  Offline_Uncorrectable      100    253       0  Old_age   -       0
+  199  UDMA_CRC_Error_Count       200    200       0  Old_age   -       0
+  200  Multi_Zone_Error_Rate      200    200       0  Old_age   -       0
+
+  Self-test
+    Current: completed without error
+    Short offline    Completed without error  at 23400 h
+    Extended offline Completed without error  at 22800 h

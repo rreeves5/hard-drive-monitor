@@ -1,0 +1,5 @@
+/dev/sdb  ST2000DM008-2FR102
+  Current status: completed: read failure
+  Typical duration: short 1 min, long 213 min
+  Short offline     Completed: read failure                   at 38201 h  first error LBA 1052763384
+  Short offline     Completed without error                   at 30120 h

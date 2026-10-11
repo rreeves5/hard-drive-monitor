@@ -1,0 +1,37 @@
+PhysicalDrive1  ST3000DM001-1CH166
+  Serial:        Z1F2SYNTH1
+  Firmware:      CC27
+  Type:          HDD
+  Protocol:      SATA
+  Capacity:      3.0 TB
+  Interface:     SATA
+  Volumes:       D:
+  Temperature:   44 C
+  Power-on:      41,877 h (4.8y)
+  Power cycles:  3,311
+  SMART verdict: -
+  Source:        file:windows_inventory.json
+
+  Health      █████████████████░░░ 86%
+  Performance ████████████████████ 100%
+  Status      WARNING
+
+  WARNING  7 uncorrected read/write errors reported by Windows
+  WARNING  Windows reports this disk's health as Warning
+
+  Windows storage reliability counters
+    Temperature                 44
+    TemperatureMax              55
+    Wear                        0
+    PowerOnHours                41877
+    StartStopCycleCount         3311
+    ReadErrorsTotal             912
+    ReadErrorsCorrected         905
+    ReadErrorsUncorrected       7
+    WriteErrorsTotal            0
+    WriteErrorsCorrected        0
+    WriteErrorsUncorrected      0
+    ReadLatencyMax              48211
+    WriteLatencyMax             3021
+
+  note: Windows Storage fallback: fewer attributes than smartctl. Install smartmontools for the full SMART view.

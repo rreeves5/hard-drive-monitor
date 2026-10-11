@@ -27,20 +27,10 @@ if [ -n "$HD" ]; then
   say "Removing the scheduled background check"; "$HD" uninstall-service || true
 fi
 
-if command -v pipx >/dev/null 2>&1 && pipx list --short 2>/dev/null | grep -q '^hard-drive-monitor '; then
-  say "pipx uninstall hard-drive-monitor"; pipx uninstall hard-drive-monitor
+[ -n "$BIN" ] || BIN="$HOME/.local/bin"
+if [ -f "$BIN/hdmon" ] || [ -L "$BIN/hdmon" ]; then
+  say "Removing $BIN/hdmon"; rm -f "$BIN/hdmon"
 fi
-for py in python3 python; do
-  if command -v "$py" >/dev/null 2>&1 && "$py" -m pip show hard-drive-monitor >/dev/null 2>&1; then
-    say "$py -m pip uninstall hard-drive-monitor"
-    "$py" -m pip uninstall -y hard-drive-monitor >/dev/null 2>&1 \
-      || "$py" -m pip uninstall -y --break-system-packages hard-drive-monitor >/dev/null 2>&1 || true
-  fi
-done
-if [ -d "$DATA/venv" ]; then
-  say "Removing private venv $DATA/venv"; rm -rf "$DATA/venv"
-fi
-if [ -L "$HOME/.local/bin/hdmon" ] && [ ! -e "$HOME/.local/bin/hdmon" ]; then rm -f "$HOME/.local/bin/hdmon"; fi
 if [ -n "$LINK" ] && [ -L "$LINK" ]; then
   say "Removing $LINK (sudo)"; sudo rm -f "$LINK"
 fi

@@ -1,0 +1,45 @@
+/dev/sdb  ST2000DM008-2FR102
+  Serial:        ZFL0SYNTH02
+  Firmware:      0001
+  Type:          HDD
+  Protocol:      ATA (smartctl -d sat)
+  Capacity:      2.0 TB
+  Rotation:      7200 rpm
+  Form factor:   3.5 inches
+  Interface:     SATA 3.1
+  Temperature:   41 C
+  Power-on:      38,211 h (4.4y)
+  Power cycles:  2,187
+  SMART verdict: PASSED
+  Source:        file:hdd_failing.json
+
+  Health      ██░░░░░░░░░░░░░░░░░░ 10%
+  Performance ████████████░░░░░░░░ 62%
+  Status      CRITICAL
+
+  CRITICAL 120 reallocated sectors - the drive is remapping bad spots to spare area
+  CRITICAL 16 pending sectors - unreadable spots waiting to be remapped; data there may already be lost
+  CRITICAL 16 offline uncorrectable sectors - found by the drive's own surface scan and could not be repaired
+  WARNING  3 reported uncorrectable errors - reads failed even after error correction
+  WARNING  1 command timeout - the drive stalled on operations (failing drive, cable or power)
+
+  ATA SMART attributes
+   ID  ATTRIBUTE                VALUE  WORST  THRESH  TYPE      FAILED  RAW
+  ───  ───────────────────────  ─────  ─────  ──────  ────────  ──────  ──────────────────
+    1  Raw_Read_Error_Rate         72     63       6  Pre-fail  -       18834944
+    3  Spin_Up_Time                96     96       0  Pre-fail  -       0
+    5  Reallocated_Sector_Ct       91     91      10  Pre-fail  -       120
+    9  Power_On_Hours              57     57       0  Old_age   -       38211
+   12  Power_Cycle_Count           98     98      20  Old_age   -       2187
+  187  Reported_Uncorrect          97     97       0  Old_age   -       3
+  188  Command_Timeout            100     99       0  Old_age   -       1 1 1
+  190  Airflow_Temperature_Cel     59     52      40  Old_age   -       41 (Min/Max 24/48)
+  194  Temperature_Celsius         41     48       0  Old_age   -       41 (0 18 0 0 0)
+  197  Current_Pending_Sector     100    100       0  Old_age   -       16
+  198  Offline_Uncorrectable      100    100       0  Old_age   -       16
+  199  UDMA_CRC_Error_Count       200    200       0  Old_age   -       0
+
+  Self-test
+    Current: completed: read failure
+    Short offline    Completed: read failure  at 38201 h  LBA 1052763384
+    Short offline    Completed without error  at 30120 h

@@ -1,0 +1,19 @@
+PhysicalDrive2  WDC WD20EARX-00PASB0
+  Serial:        WD-WMAZASYNTH2
+  Firmware:      51.0AB51
+  Type:          HDD
+  Protocol:      USB
+  Capacity:      2.0 TB
+  Interface:     USB
+  Volumes:       G:
+  SMART verdict: FAILED
+  Source:        file:windows_inventory.json
+
+  Health      █░░░░░░░░░░░░░░░░░░░ 5%
+  Performance ████████████████████ 100%
+  Status      CRITICAL
+
+  CRITICAL Drive's own SMART self-assessment says FAILED - back up now
+
+  note: Reliability counters unavailable (run as Administrator, or the driver does not expose them)
+  note: Windows Storage fallback: fewer attributes than smartctl. Install smartmontools for the full SMART view.

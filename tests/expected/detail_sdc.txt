@@ -1,0 +1,39 @@
+/dev/sdc  Samsung SSD 860 EVO 500GB
+  Serial:        S3Z1NB0SYNTH03
+  Firmware:      RVT04B6Q
+  Type:          SSD
+  Protocol:      ATA (smartctl -d sat)
+  Capacity:      500 GB
+  Form factor:   2.5 inches
+  Interface:     SATA 3.1
+  Temperature:   31 C
+  Power-on:      21,877 h (2.5y)
+  Power cycles:  1,544
+  SMART verdict: PASSED
+  Source:        file:ssd_sata_healthy.json
+
+  Health      ███████████████████░ 94%
+  Performance ████████████████████ 100%
+  Status      OK
+
+  ATA SMART attributes
+   ID  ATTRIBUTE                VALUE  WORST  THRESH  TYPE      FAILED  RAW
+  ───  ───────────────────────  ─────  ─────  ──────  ────────  ──────  ───────────
+    5  Reallocated_Sector_Ct      100    100      10  Pre-fail  -       0
+    9  Power_On_Hours              95     95       0  Old_age   -       21877
+   12  Power_Cycle_Count           98     98       0  Old_age   -       1544
+  177  Wear_Leveling_Count         94     94       0  Pre-fail  -       61
+  179  Used_Rsvd_Blk_Cnt_Tot      100    100      10  Pre-fail  -       0
+  181  Program_Fail_Cnt_Total     100    100      10  Old_age   -       0
+  182  Erase_Fail_Count_Total     100    100      10  Old_age   -       0
+  183  Runtime_Bad_Block          100    100      10  Pre-fail  -       0
+  187  Uncorrectable_Error_Cnt    100    100       0  Old_age   -       0
+  190  Airflow_Temperature_Cel     69     50       0  Old_age   -       31
+  195  ECC_Error_Rate             200    200       0  Old_age   -       0
+  199  CRC_Error_Count            100    100       0  Old_age   -       0
+  235  POR_Recovery_Count          99     99       0  Old_age   -       41
+  241  Total_LBAs_Written          99     99       0  Old_age   -       34561287512
+
+  Self-test
+    Current: completed without error
+    Short offline    Completed without error  at 21500 h

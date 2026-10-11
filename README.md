@@ -6,10 +6,15 @@ drives on **Linux, macOS and Windows**, in the spirit of Hard Disk Sentinel. It 
 **Health %**, a **Performance %** and an **OK / WARNING / CRITICAL** status with plain-English reasons, keeps a
 local history, and alerts you when something gets worse.
 
+It is a **single native executable** per OS (C++17, no Python or other runtime needed): a fully static
+`hdmon` on Linux, `hdmon.exe` (+ `hdmonw.exe`, the same program without a console window for the scheduled
+task) on Windows, and a universal (arm64 + x86_64) `hdmon` on macOS.
+
 ## Quick install
 
-Run from a clone or the unzipped folder. Each installer puts `hdmon` on your PATH (works in any new
-terminal) **and turns on the automatic background check** (hourly + at login/boot):
+Run from a clone or the unzipped folder. Each installer copies the prebuilt `hdmon` binary from `dist/`
+(or builds it with CMake if there is none for your machine) into a per-user bin folder, puts it on your PATH
+(works in any new terminal) **and turns on the automatic background check** (hourly + at login/boot):
 
 | OS | One line |
 |---|---|
@@ -55,90 +60,112 @@ smartmontools`, `brew install smartmontools`, or `winget install smartmontools.s
 | `hdmon watch --interval 1h` | Loop mode (`check` every interval; `--count N` to stop). |
 | `hdmon selftest <dev> [short\|long]` | Starts a SMART self-test and prints the expected duration. `--results` shows the self-test log. |
 | `hdmon install-service` / `uninstall-service` | Hourly schedule: systemd user timer / launchd agent / Task Scheduler. |
-| `hdmon serve` | Minimal local web dashboard on `http://127.0.0.1:8765` (never binds to other interfaces). |
 | `hdmon init-config` | Writes a commented sample config. |
 | `hdmon alert-test` | Sends a test notification (and e-mail, if enabled). |
 
-- `--from-json FILE_OR_DIR` (status, detail, check, watch, selftest --results, serve): read saved
+- `--from-json FILE_OR_DIR` (status, detail, check, watch, selftest --results): read saved
   `smartctl -x --json` output instead of live drives. Useful for demos, for checking a drive from another
   machine, or for bug reports. A `--from-json` run is **not** written to history unless you add `--record`.
 
 ## Install
 
-You need Python 3.8+ and smartmontools 7.0+.
+You need smartmontools 7.0+ (`smartctl`). Nothing else at run time.
+
+Prebuilt binaries (also attached to GitHub releases by CI for `v*` tags):
+
+| File | OS |
+|---|---|
+| `dist/hdmon-linux-x86_64` | Linux x86_64, fully static (any distro) |
+| `dist/hdmon-windows-x86_64.exe` + `dist/hdmonw-windows-x86_64.exe` | Windows 10/11 x64 (no DLLs beyond Windows itself) |
+| `hdmon-macos-universal` | macOS 10.15+, Apple Silicon + Intel (built by CI only) |
 
 ### What the installers do
 
 `install.sh` (Linux, macOS):
 
-1. Installs the package with **pipx** if you have it, otherwise `pip install --user`, otherwise (when pip
-   refuses, e.g. "externally-managed-environment" on Debian 12 / Ubuntu 23.04+) into a private venv at
-   `~/.local/share/hard-drive-monitor/venv` with `hdmon` linked into `~/.local/bin`.
-2. Puts the scripts folder on PATH: runs `pipx ensurepath` (pipx case) and adds a marked block to
-   `~/.profile`, `~/.bashrc`, `~/.bash_profile` (if it exists) and `~/.zshrc` (if it exists, always on macOS).
-   Running it again does not add duplicates.
-3. Offers a **smartctl-only sudoers rule** (asks interactively; `--sudoers` / `--no-sudoers` to decide up front).
+1. Picks a binary that runs on this machine: `--binary FILE`, then `./hdmon` next to the script, then
+   `dist/hdmon-<os>-<arch>` / `dist/hdmon-macos-universal`, then `build/hdmon`. If none runs, it **builds from
+   source with CMake** (needs `cmake` 3.16+ and a C++17 compiler; `--build` forces this).
+2. Copies it to `~/.local/bin/hdmon` (atomic replace, so it is safe while the background check runs).
+3. Puts `~/.local/bin` on PATH with a marked block in `~/.profile`, `~/.bashrc`, `~/.bash_profile` (if it
+   exists) and `~/.zshrc` (if it exists, always on macOS). Running it again does not add duplicates.
+4. Offers a **smartctl-only sudoers rule** (asks interactively; `--sudoers` / `--no-sudoers` to decide up front).
    It is validated with `visudo` before it is installed, and never written without `visudo`.
-4. Runs `hdmon install-service` to schedule the background check (skip with `--no-service`).
-5. `--system` also symlinks `hdmon` into `/usr/local/bin` (uses sudo).
+5. Runs `hdmon install-service` to schedule the background check (skip with `--no-service`).
+6. `--system` also symlinks `hdmon` into `/usr/local/bin` (uses sudo).
 
 `install.ps1` (Windows):
 
-1. Installs with **pipx** if present, otherwise `py -m pip install --user`.
-2. Adds the Python user Scripts folder (or the pipx bin folder) to the **User** `Path` with
-   `[Environment]::SetEnvironmentVariable('Path', ..., 'User')`; `-System` uses the **Machine** `Path` instead
-   (needs admin). Idempotent, and it broadcasts the change (`WM_SETTINGCHANGE`) so new windows see it.
-   If no `hdmon.exe` was created it drops an `hdmon.cmd` shim so `hdmon` works in cmd.exe too.
-3. Runs `hdmon install-service`: a Task Scheduler task at logon + hourly. When the script runs **elevated**
+1. Picks `-Binary FILE`, then `hdmon.exe` next to the script, then `dist\hdmon-windows-x86_64.exe`, then
+   `build\Release\hdmon.exe`; otherwise builds with CMake (needs CMake + Visual Studio Build Tools or MinGW-w64).
+2. Copies `hdmon.exe` and `hdmonw.exe` to `%LOCALAPPDATA%\hard-drive-monitor\bin` (`-System`:
+   `%ProgramFiles%\hard-drive-monitor\bin`, needs admin).
+3. Adds that folder to the **User** `Path` with `[Environment]::SetEnvironmentVariable('Path', ..., 'User')`;
+   `-System` uses the **Machine** `Path`. Idempotent, and it broadcasts the change (`WM_SETTINGCHANGE`) so new
+   windows see it. `hdmon` then works in cmd.exe and PowerShell alike (no shim needed any more).
+4. Runs `hdmon install-service`: a Task Scheduler task at logon + hourly. When the script runs **elevated**
    the task gets **highest privileges**, so smartctl can read the drives (skip with `-NoService`).
 
 After installing, **open a new terminal / Command Prompt / PowerShell** and run `hdmon status`.
 
-`uninstall.sh` / `uninstall.ps1` remove the scheduled check, the package, the PATH entries the installer
-added, the shim and the sudoers rule (if the installer created them). History and config are kept unless you
-pass `--purge` / `-Purge`.
+`uninstall.sh` / `uninstall.ps1` remove the scheduled check, the binary, the PATH entries the installer added
+and the sudoers rule (if the installer created them). History and config are kept unless you pass
+`--purge` / `-Purge`.
 
 ### Manual install (alternative)
 
-#### Linux
+It is one file, so you can also just copy it somewhere on your PATH:
 
 ```bash
-sudo apt install smartmontools pipx          # Fedora: sudo dnf install smartmontools pipx
-                                              # Arch:   sudo pacman -S smartmontools python-pipx
-pipx ensurepath                               # then open a new terminal
-pipx install ./hard-drive-monitor             # from a clone or the unzipped folder
-sudo ~/.local/bin/hdmon status --no-record    # quick look (smartctl needs root, see below)
+# Linux
+sudo apt install smartmontools               # Fedora: dnf, Arch: pacman -S smartmontools
+install -m 755 dist/hdmon-linux-x86_64 ~/.local/bin/hdmon
+sudo ~/.local/bin/hdmon status --no-record   # quick look (smartctl needs root, see below)
+
+# macOS
+brew install smartmontools
+install -m 755 hdmon-macos-universal ~/.local/bin/hdmon
+hdmon status                                 # internal Apple SSDs often work without sudo
 ```
 
-Note: on Debian/Ubuntu `smartctl` lives in `/usr/sbin`, which is not on a normal user's PATH. Hard Drive Monitor
-finds it there anyway.
-
-#### macOS
-
-```bash
-brew install smartmontools pipx
-pipx ensurepath                               # then open a new terminal
-pipx install ./hard-drive-monitor
-hdmon status                                  # internal Apple SSDs often work without sudo
+```powershell
+# Windows
+winget install smartmontools.smartmontools   # or: choco install smartmontools
+# copy hdmon.exe and hdmonw.exe to a folder on your Path, then in an elevated terminal:
+hdmon status
 ```
+
+Note: on Debian/Ubuntu `smartctl` lives in `/usr/sbin`, which is not on a normal user's PATH. Hard Drive
+Monitor finds it there anyway (and in Homebrew / `Program Files\smartmontools\bin` / Chocolatey locations).
 
 External USB drives on macOS often do not pass SMART data through at all (that is the USB bridge, not this
 tool); they show up as `UNKNOWN`.
 
-#### Windows
+**Administrator rights are needed** for smartctl to open physical drives on Windows. Without admin (or
+without smartmontools), Hard Drive Monitor falls back to the Windows Storage counters (PowerShell
+`Get-PhysicalDisk` / `Get-StorageReliabilityCounter`), which give fewer attributes and sometimes none at all
+for USB drives.
 
-```powershell
-winget install smartmontools.smartmontools    # or: choco install smartmontools
-winget install Python.Python.3.12
-py -m pip install --user pipx; py -m pipx ensurepath   # then open a new terminal
-pipx install .\hard-drive-monitor
-# In an elevated terminal (Run as Administrator):
-hdmon status
+### Build from source
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release     # Windows/MSVC: add -A x64, build with --config Release
+cmake --build build --parallel
+ctest --test-dir build -C Release --output-on-failure
 ```
 
-**Administrator rights are needed** for smartctl to open physical drives on Windows. Without admin (or
-without smartmontools), Hard Drive Monitor falls back to the Windows Storage counters, which give fewer
-attributes and sometimes none at all for USB drives.
+Requirements: CMake 3.16+, a C++17 compiler (GCC 9+, Clang 10+, AppleClang, MSVC 2019+ or MinGW-w64). All
+dependencies are vendored single files in `third_party/`: [nlohmann/json](https://github.com/nlohmann/json)
+3.11.3, the [SQLite](https://sqlite.org) 3.46.1 amalgamation and [doctest](https://github.com/doctest/doctest)
+2.4.11 (tests only). No Boost. Options: `-DHDMON_STATIC=OFF` (dynamic linking), `-DHDMON_BUILD_TESTS=OFF`.
+
+Cross-compile the Windows binaries from Linux with mingw-w64:
+
+```bash
+sudo apt install mingw-w64
+cmake -S . -B build-win -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64-x86_64.cmake -DCMAKE_BUILD_TYPE=Release
+cmake --build build-win --parallel                 # -> build-win/hdmon.exe, hdmonw.exe, hdmon_tests.exe
+```
 
 ## smartctl needs root (sudo notes)
 
@@ -181,7 +208,7 @@ records to the history database and alerts you only when something got worse.
 | Linux (systemd) | User timer `~/.config/systemd/user/hard-drive-monitor.{service,timer}`: 2 min after your session starts, then hourly (`Persistent=true` catches up after sleep). | `systemctl --user list-timers hard-drive-monitor.timer` | `hdmon uninstall-service` |
 | Linux (no systemd user session, e.g. WSL/containers) | Two lines in your **crontab** marked `# hard-drive-monitor`: `@reboot` (+2 min) and hourly. | `crontab -l` | `hdmon uninstall-service` |
 | macOS | launchd agent `~/Library/LaunchAgents/com.hard-drive-monitor.check.plist`: `RunAtLoad` (at login) + `StartInterval` 3600. Log: `~/Library/Logs/hard-drive-monitor.log`. | `launchctl print gui/$UID/com.hard-drive-monitor.check` | `hdmon uninstall-service` |
-| Windows | Task Scheduler task `hard-drive-monitor`: at logon (+2 min) and every hour, `pythonw -m hard_drive_monitor check --quiet` (no console window). Highest privileges when installed from an elevated window. | `schtasks /Query /TN hard-drive-monitor` | `hdmon uninstall-service` |
+| Windows | Task Scheduler task `hard-drive-monitor`: at logon (+2 min) and every hour, `hdmonw.exe check --quiet` (`hdmonw.exe` is the GUI-subsystem build, so no console window flashes). Highest privileges when installed from an elevated window. | `schtasks /Query /TN hard-drive-monitor` | `hdmon uninstall-service` |
 
 `hdmon install-service` prints everything it writes. Options: `--interval 30m`, `--dry-run` (print only),
 `--no-enable` (write files, don't enable), `--highest` (Windows: force highest privileges), `--system`
@@ -206,7 +233,11 @@ trends in `hdmon history` but do not alert on their own.
 
 - Desktop: `notify-send` (Linux), `osascript` (macOS), PowerShell toast on Windows (BurntToast module if
   installed, otherwise a tray balloon). If none is available, it says so and skips.
-- E-mail: SMTP settings in the config file.
+- E-mail: SMTP settings in the config file. The native build has no SMTP library; it sends mail by running the
+  **`curl` command-line tool** (`smtp://` + STARTTLS via `--ssl-reqd`, or `smtps://` when `ssl = true`). curl
+  ships with Windows 10 1803+ and macOS, and is one package away on Linux (`sudo apt install curl`). The
+  password is passed to curl on stdin (`curl -K -`), never on the command line. If curl is missing,
+  `hdmon alert-test` says so and desktop notifications still work.
 
 ## Configuration
 
@@ -241,8 +272,8 @@ hdd_temp_crit = 55
 devices = ["/dev/sdz"]
 ```
 
-On Python 3.11+ the file is parsed with `tomllib`; on older Pythons with `tomli` if installed, otherwise with a
-small built-in parser that handles the simple `key = value` format above.
+The file is read by a small built-in parser that handles the simple TOML subset above (`[sections]`,
+`key = value` with strings, integers, floats, booleans, arrays and `#` comments).
 
 History database (SQLite):
 
@@ -308,7 +339,7 @@ An estimate of how much the drive's condition is likely slowing it down. It is *
 | Currently at warning / critical temperature | 10 / 25 | |
 | NVMe time above warning/critical temperature (throttling) | 1 + hours | 15 |
 
-All constants live at the top of `hard_drive_monitor/health.py`.
+All constants live at the top of `src/health.cpp`.
 
 ## Examples
 
@@ -321,7 +352,6 @@ hdmon history --limit 48
 hdmon selftest /dev/sda short         # prints expected duration
 hdmon selftest /dev/sda --results
 hdmon watch --interval 30m
-hdmon serve                           # http://127.0.0.1:8765
 
 # Demo without real drives (synthetic fixtures):
 hdmon status --from-json tests/fixtures
@@ -335,16 +365,34 @@ Save a drive's data for later or for a bug report: `sudo smartctl -x --json /dev
 ## Development
 
 ```bash
-python -m unittest discover -s tests -t . -v
-python tests/fixtures/make_fixtures.py     # regenerate the synthetic fixtures
-python tools/render_demo.py                # regenerate demo-status.png (needs Pillow)
+cmake -S . -B build && cmake --build build -j && ./build/hdmon_tests   # or: ctest --test-dir build
+python3 tests/fixtures/make_fixtures.py    # regenerate the synthetic fixtures (dev tool)
+python3 tools/render_demo.py               # regenerate demo-status.png from build/hdmon (needs Pillow)
 ```
+
+Layout: `src/` (one module per concern: `smart` discovery/parsing incl. the Windows fallback, `health` scoring,
+`history` SQLite, `alerts`, `service` scheduling, `render`, `cli`), `tests/` (doctest), `third_party/`.
+Platform-specific code is behind `#ifdef _WIN32` / `__APPLE__`; commands that only exist on one OS
+(`diskutil`, `lsblk`, PowerShell, `schtasks`, `launchctl`, `systemctl`) are run as child processes.
 
 All fixtures in `tests/fixtures/` are **synthetic**: hand-written to match the shape of `smartctl -x --json`
 (smartmontools 7.4) and of the Windows PowerShell inventory query. They were not captured from real drives,
 and their serial numbers are fake. Every file carries a `_synthetic` marker.
 
-CI (GitHub Actions) runs the tests on Ubuntu, macOS and Windows with Python 3.10 and 3.12.
+`tests/expected/` holds the output of the original Python implementation (0.1.0) on those fixtures. The
+C++ test suite checks the native build against it: identical Health/Performance/status and reasons for every
+fixture and scenario, identical alert text, and byte-identical `status` / `detail` / `selftest` output.
+
+CI (GitHub Actions) builds and tests on Ubuntu, macOS and Windows, smoke-tests the installers, and on a
+`v*` tag attaches the Linux, macOS and Windows binaries (plus `SHA256SUMS.txt`) to a GitHub release.
+
+### Changes from the Python version (0.1.x)
+
+- `hdmon serve` (the local web dashboard) was **dropped**; use `hdmon status`, or `--json` for your own tooling.
+- E-mail goes through the `curl` command-line tool instead of Python's smtplib (see Alerts).
+- The config file is read by the built-in TOML-subset parser only (no `tomllib`).
+- Everything else (commands, options, exit codes, scores, reasons, history database format, file locations)
+  is unchanged; an existing `history.db` keeps working.
 
 ## License
 

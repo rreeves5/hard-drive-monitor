@@ -1,0 +1,18 @@
+DEVICE      MODEL                       SERIAL            TYPE    SIZE  TEMP         POWER-ON  CYCLES  HEALTH         PERF  STATUS
+──────────  ──────────────────────────  ────────────────  ────  ──────  ────  ───────────────  ──────  ─────────────  ────  ────────
+/dev/nvme0  Samsung SSD 970 EVO Plus …  S4EWNX0SYNTH04    NVMe  1.0 TB  38 C          5,120 h     890  ████████  97%  100%  OK
+/dev/nvme1  INTEL SSDPEKNW512G8         BTNH9SYNTH05      NVMe  512 GB  49 C  31,877 h (3.6y)   4,410  ███░░░░░  38%   97%  WARNING
+/dev/sda    WDC WD40EFRX-68N32N0        WD-SYNTH00000001  HDD   4.0 TB  34 C  23,456 h (2.7y)     312  ████████ 100%  100%  OK
+/dev/sdb    ST2000DM008-2FR102          ZFL0SYNTH02       HDD   2.0 TB  41 C  38,211 h (4.4y)   2,187  █░░░░░░░  10%   62%  CRITICAL
+/dev/sdc    Samsung SSD 860 EVO 500GB   S3Z1NB0SYNTH03    SSD   500 GB  31 C  21,877 h (2.5y)   1,544  ████████  94%  100%  OK
+
+nvme1  WARNING
+   ! Health score 38% is below 70% - mainly NVMe wear: 62% of rated write endurance used; Available spare 64% (threshold 10%)
+sdb  CRITICAL
+   ✖ 120 reallocated sectors - the drive is remapping bad spots to spare area
+   ✖ 16 pending sectors - unreadable spots waiting to be remapped; data there may already be lost
+   ✖ 16 offline uncorrectable sectors - found by the drive's own surface scan and could not be repaired
+   ! 3 reported uncorrectable errors - reads failed even after error correction
+   ! 1 command timeout - the drive stalled on operations (failing drive, cable or power)
+
+5 drive(s): 3 OK  1 WARNING  1 CRITICAL

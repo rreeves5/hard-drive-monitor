@@ -1,0 +1,13 @@
+DEVICE               MODEL                       SERIAL                TYPE    SIZE  TEMP         POWER-ON  CYCLES  HEALTH         PERF  STATUS
+───────────────────  ──────────────────────────  ────────────────────  ────  ──────  ────  ───────────────  ──────  ─────────────  ────  ────────
+PhysicalDrive0 (C:)  Samsung SSD 970 EVO Plus …  0025_3852_91B0_SYN1.  NVMe  1.0 TB  39 C          6,120 h     902  ████████  96%  100%  OK
+PhysicalDrive1 (D:)  ST3000DM001-1CH166          Z1F2SYNTH1            HDD   3.0 TB  44 C  41,877 h (4.8y)   3,311  ███████░  86%  100%  WARNING
+PhysicalDrive2 (G:)  WDC WD20EARX-00PASB0        WD-WMAZASYNTH2        HDD   2.0 TB     -                -       -  ░░░░░░░░   5%  100%  CRITICAL
+
+PhysicalDrive1  WARNING
+   ! 7 uncorrected read/write errors reported by Windows
+   ! Windows reports this disk's health as Warning
+PhysicalDrive2  CRITICAL
+   ✖ Drive's own SMART self-assessment says FAILED - back up now
+
+3 drive(s): 1 OK  1 WARNING  1 CRITICAL

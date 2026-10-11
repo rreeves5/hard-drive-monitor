@@ -1,0 +1,34 @@
+PhysicalDrive0  Samsung SSD 970 EVO Plus 1TB
+  Serial:        0025_3852_91B0_SYN1.
+  Firmware:      2B2QEXM7
+  Type:          NVMe
+  Protocol:      NVMe
+  Capacity:      1.0 TB
+  Interface:     NVMe
+  Volumes:       C:
+  Temperature:   39 C
+  Power-on:      6,120 h
+  Power cycles:  902
+  SMART verdict: PASSED
+  Source:        file:windows_inventory.json
+
+  Health      ███████████████████░ 96%
+  Performance ████████████████████ 100%
+  Status      OK
+
+  Windows storage reliability counters
+    Temperature                 39
+    TemperatureMax              70
+    Wear                        4
+    PowerOnHours                6120
+    StartStopCycleCount         902
+    ReadErrorsTotal             0
+    ReadErrorsCorrected         0
+    ReadErrorsUncorrected       0
+    WriteErrorsTotal            0
+    WriteErrorsCorrected        0
+    WriteErrorsUncorrected      0
+    ReadLatencyMax              1012
+    WriteLatencyMax             2210
+
+  note: Windows Storage fallback: fewer attributes than smartctl. Install smartmontools for the full SMART view.

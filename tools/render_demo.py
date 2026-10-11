@@ -1,5 +1,7 @@
 """Render `hdmon status --from-json tests/fixtures` (synthetic data) to demo-status.png.
 
+Dev tool only (the product itself needs no Python). Runs the native binary: the first of
+$HDMON, build/hdmon, build/Release/hdmon(.exe), dist/hdmon-linux-x86_64.
 Needs Pillow:  pip install pillow
 """
 import os
@@ -45,10 +47,23 @@ def spans(line):
     return out
 
 
+def find_binary():
+    cands = [os.environ.get("HDMON", ""), "build/hdmon", "build/Release/hdmon.exe", "build/hdmon.exe",
+             "dist/hdmon-linux-x86_64"]
+    for c in cands:
+        p = os.path.join(ROOT, c) if c and not os.path.isabs(c) else c
+        if p and os.path.isfile(p):
+            return p
+    sys.exit("hdmon binary not found - build it first: cmake -S . -B build && cmake --build build")
+
+
 def main():
-    cmd = [sys.executable, "-m", "hard_drive_monitor", "status", "--from-json", "tests/fixtures", "--color", "always"]
-    env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONPATH=ROOT)
-    text = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", cwd=ROOT, env=env).stdout
+    exe = find_binary()
+    print(f"rendering output of {exe}")
+    cmd = [exe, "status", "--from-json", "tests/fixtures", "--color", "always"]
+    env = dict(os.environ)
+    env.pop("NO_COLOR", None)
+    text = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", cwd=ROOT, env=env, check=True).stdout
     lines = ["\x1b[2m$ hdmon status --from-json tests/fixtures      # synthetic demo data\x1b[0m", ""] + text.rstrip().splitlines()
     size = 15
     reg, bold, sym = font(FONTS, size), font(BOLD + FONTS, size), font(SYMBOL_FALLBACK, size)

@@ -1,0 +1,44 @@
+/dev/nvme1  INTEL SSDPEKNW512G8
+  Serial:        BTNH9SYNTH05
+  Firmware:      2B2QEXM7
+  Type:          NVMe
+  Protocol:      NVMe (smartctl -d nvme)
+  Capacity:      512 GB
+  Temperature:   49 C
+  Power-on:      31,877 h (3.6y)
+  Power cycles:  4,410
+  SMART verdict: PASSED
+  Source:        file:nvme_worn.json
+
+  Health      ████████░░░░░░░░░░░░ 38%
+  Performance ███████████████████░ 97%
+  Status      WARNING
+
+  WARNING  Health score 38% is below 70% - mainly NVMe wear: 62% of rated write endurance used; Available spare 64% (threshold 10%)
+  INFO     NVMe wear: 62% of rated write endurance used
+  INFO     Available spare 64% (threshold 10%)
+  INFO     Has spent 95 minutes above its warning/critical temperature (throttling)
+  INFO     233 unsafe shutdowns (power lost without a clean shutdown); not a defect by itself
+
+  NVMe SMART / health log
+    critical_warning  *               0
+    temperature                       49
+    available_spare  *                64
+    available_spare_threshold         10
+    percentage_used  *                62
+    data_units_read                   1224000000
+    data_units_written                612000000
+    host_reads                        512331812
+    host_writes                       389112033
+    controller_busy_time              1832
+    power_cycles                      4410
+    power_on_hours                    31877
+    unsafe_shutdowns  *               233
+    media_errors  *                   0
+    num_err_log_entries               12
+    warning_temp_time                 95
+    critical_comp_time                0
+
+  Self-test
+    Current: No self-test in progress
+    Short            Completed without error  at 31847 h

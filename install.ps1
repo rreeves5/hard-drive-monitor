@@ -8,8 +8,13 @@
   at logon and every hour; with highest privileges when this script runs elevated).
 
 .PARAMETER System
-  Add the scripts folder to the MACHINE Path (all users) instead of the user Path. Needs an
-  elevated (Run as Administrator) PowerShell.
+  Install to %ProgramFiles%\hard-drive-monitor\bin and add it to the MACHINE Path (all users)
+  instead of %LOCALAPPDATA%\hard-drive-monitor\bin + the user Path. Needs an elevated PowerShell.
+
+.PARAMETER Binary
+  Path to a hdmon.exe to install. Default: hdmon.exe next to this script, then
+  dist\hdmon-windows-x86_64.exe, then build\(Release\)hdmon.exe; if none exists the script builds
+  from source with CMake (needs cmake and Visual Studio Build Tools or MinGW-w64).
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File .\install.ps1
@@ -17,9 +22,9 @@
   powershell -ExecutionPolicy Bypass -File .\install.ps1 -NoService
 #>
 [CmdletBinding()]
-param([switch]$System, [switch]$NoService)
+param([switch]$System, [switch]$NoService, [string]$Binary = '')
 
-# Native tools (pip, pipx) write warnings to stderr; with 'Stop' Windows PowerShell 5.1 would turn those
+# Native tools (cmake, schtasks) may write warnings to stderr; with 'Stop' Windows PowerShell 5.1 would turn those
 # into terminating errors. Failures are checked explicitly via $LASTEXITCODE instead.
 $ErrorActionPreference = 'Continue'
 $Src = $PSScriptRoot
@@ -67,47 +72,62 @@ if ($System -and -not (Test-Admin)) {
 }
 $Scope = if ($System) { 'Machine' } else { 'User' }
 
-# --- find Python 3.8+
-$PyCmd = $null
-if (Get-Command py -ErrorAction SilentlyContinue) { $PyCmd = @('py', '-3') }
-elseif (Get-Command python -ErrorAction SilentlyContinue) { $PyCmd = @('python') }
-else { throw "Python 3.8+ not found. Install it with: winget install Python.Python.3.12" }
-function Invoke-Py {
-    # Simple (non-advanced) function so "-c" / "-m" pass through in $args untouched.
-    $exe = $PyCmd[0]; $pre = @($PyCmd | Select-Object -Skip 1)
-    & $exe @pre @args
-}
-$PyExe = (Invoke-Py -c "import sys; print(sys.executable)").Trim()
-$ok = Invoke-Py -c "import sys; print(int(sys.version_info >= (3, 8)))"
-if ($ok.Trim() -ne '1') { throw "Python 3.8+ is required ($PyExe is too old)." }
+$BinDir = if ($System) { Join-Path $env:ProgramFiles 'hard-drive-monitor\bin' } else { Join-Path $StateDir 'bin' }
 
-# --- install
-$Method = ''
-$BinDir = ''
-if (Get-Command pipx -ErrorAction SilentlyContinue) {
-    Say 'Installing with pipx'
-    & pipx install --force $Src
-    if ($LASTEXITCODE -ne 0) { throw 'pipx install failed' }
-    $BinDir = (& pipx environment --value PIPX_BIN_DIR 2>$null)
-    if (-not $BinDir) { $BinDir = Join-Path $env:USERPROFILE '.local\bin' }
-    $BinDir = $BinDir.Trim()
-    $Method = 'pipx'
+# --- find a prebuilt binary (or build one)
+function Find-Pair([string]$exe) {
+    # hdmonw.exe (no console window, used by the scheduled task) sits next to hdmon.exe.
+    $dir = Split-Path -Parent $exe
+    $name = Split-Path -Leaf $exe
+    $w = Join-Path $dir ($name -replace '^hdmon', 'hdmonw')
+    if (Test-Path $w) { return $w } else { return $null }
+}
+$Candidates = @()
+if ($Binary) { $Candidates += $Binary }
+$Candidates += @((Join-Path $Src 'hdmon.exe'), (Join-Path $Src 'dist\hdmon-windows-x86_64.exe'),
+                 (Join-Path $Src 'build\Release\hdmon.exe'), (Join-Path $Src 'build\hdmon.exe'))
+$Exe = $null
+foreach ($c in $Candidates) {
+    if ($c -and (Test-Path $c)) {
+        $null = & $c --version 2>$null
+        if ($LASTEXITCODE -eq 0) { $Exe = (Resolve-Path $c).Path; break }
+        if ($c -eq $Binary) { throw "-Binary $Binary does not run on this machine" }
+    }
+}
+$Method = 'binary'
+$BuildDir = $null
+if (-not $Exe) {
+    if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) {
+        throw ('No prebuilt hdmon.exe found and cmake is not installed. Download a release binary, or install ' +
+               'CMake + Visual Studio Build Tools (winget install Kitware.CMake Microsoft.VisualStudio.2022.BuildTools).')
+    }
+    $BuildDir = Join-Path ([IO.Path]::GetTempPath()) ("hdmon-build-" + [guid]::NewGuid().ToString('N'))
+    Say "Building hdmon from source with CMake (in $BuildDir)"
+    & cmake -S $Src -B $BuildDir -DHDMON_BUILD_TESTS=OFF | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'cmake configure failed' }
+    & cmake --build $BuildDir --config Release --parallel | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'cmake build failed' }
+    $Exe = @((Join-Path $BuildDir 'Release\hdmon.exe'), (Join-Path $BuildDir 'hdmon.exe')) | Where-Object { Test-Path $_ } | Select-Object -First 1
+    if (-not $Exe) { throw 'build finished but hdmon.exe was not found' }
+    $Method = 'built'
 } else {
-    Say "pipx not found; installing with: $PyExe -m pip install --user"
-    Invoke-Py -m pip install --user --upgrade $Src
-    if ($LASTEXITCODE -ne 0) { throw 'pip install --user failed' }
-    $BinDir = (Invoke-Py -c "import sysconfig; print(sysconfig.get_path('scripts', 'nt_user'))").Trim()
-    $Method = 'pip-user'
+    Say "Using prebuilt binary $Exe"
 }
 
-# --- cmd.exe shim if pip did not produce hdmon.exe (e.g. unusual Python builds)
-$Shim = $null
-if (-not (Test-Path (Join-Path $BinDir 'hdmon.exe'))) {
-    New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
-    $Shim = Join-Path $BinDir 'hdmon.cmd'
-    "@echo off`r`n`"$PyExe`" -m hard_drive_monitor %*`r`n" | Set-Content -Path $Shim -Encoding ASCII -NoNewline
-    Say "Wrote cmd.exe shim $Shim"
+# --- copy into the bin dir (a running copy, e.g. the scheduled task, is renamed out of the way first)
+New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
+function Install-File([string]$from, [string]$to) {
+    if (Test-Path $to) {
+        try { Remove-Item $to -Force -ErrorAction Stop }
+        catch { Move-Item $to "$to.old" -Force -ErrorAction SilentlyContinue }
+    }
+    Copy-Item $from $to -Force
 }
+Install-File $Exe (Join-Path $BinDir 'hdmon.exe')
+$W = Find-Pair $Exe
+if ($W) { Install-File $W (Join-Path $BinDir 'hdmonw.exe') }
+if ($BuildDir) { Remove-Item $BuildDir -Recurse -Force -ErrorAction SilentlyContinue }
+$Shim = $null
 
 # --- PATH
 $Added = Add-ToPath $BinDir $Scope
@@ -128,7 +148,7 @@ $state = [pscustomobject]@{
 }
 $state | ConvertTo-Json | Set-Content -Path $StateFile -Encoding UTF8
 
-$exe = if (Test-Path (Join-Path $BinDir 'hdmon.exe')) { Join-Path $BinDir 'hdmon.exe' } else { $Shim }
+$exe = Join-Path $BinDir 'hdmon.exe'
 $ver = & $exe --version
 Say "Installed: $ver ($Method, $exe)"
 $IsAdmin = Test-Admin

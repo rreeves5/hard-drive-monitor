@@ -1,0 +1,40 @@
+/dev/nvme0  Samsung SSD 970 EVO Plus 1TB
+  Serial:        S4EWNX0SYNTH04
+  Firmware:      2B2QEXM7
+  Type:          NVMe
+  Protocol:      NVMe (smartctl -d nvme)
+  Capacity:      1.0 TB
+  Temperature:   38 C
+  Power-on:      5,120 h
+  Power cycles:  890
+  SMART verdict: PASSED
+  Source:        file:nvme_healthy.json
+
+  Health      ███████████████████░ 97%
+  Performance ████████████████████ 100%
+  Status      OK
+
+  INFO     14 unsafe shutdowns (power lost without a clean shutdown); not a defect by itself
+
+  NVMe SMART / health log
+    critical_warning  *               0
+    temperature                       38
+    available_spare  *                100
+    available_spare_threshold         10
+    percentage_used  *                3
+    data_units_read                   62500000
+    data_units_written                31250000
+    host_reads                        512331812
+    host_writes                       389112033
+    controller_busy_time              1832
+    power_cycles                      890
+    power_on_hours                    5120
+    unsafe_shutdowns  *               14
+    media_errors  *                   0
+    num_err_log_entries               0
+    warning_temp_time                 0
+    critical_comp_time                0
+
+  Self-test
+    Current: No self-test in progress
+    Short            Completed without error  at 5090 h

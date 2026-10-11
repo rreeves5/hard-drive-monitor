@@ -19,17 +19,16 @@ if (Test-Path $StateFile) { $state = Get-Content $StateFile -Raw | ConvertFrom-J
 & schtasks /Query /TN hard-drive-monitor *> $null
 if ($LASTEXITCODE -eq 0) { Say 'Removing scheduled task hard-drive-monitor'; & schtasks /Delete /TN hard-drive-monitor /F | Out-Null }
 
-# package
-if (Get-Command pipx -ErrorAction SilentlyContinue) {
-    $list = & pipx list --short 2>$null
-    if ($list -match '^hard-drive-monitor ') { Say 'pipx uninstall hard-drive-monitor'; & pipx uninstall hard-drive-monitor }
+# binaries
+$binDir = if ($state -and $state.bin_dir) { $state.bin_dir } else { Join-Path $StateDir 'bin' }
+foreach ($f in 'hdmon.exe', 'hdmonw.exe', 'hdmon.exe.old', 'hdmonw.exe.old') {
+    $p = Join-Path $binDir $f
+    if (Test-Path $p) {
+        Remove-Item $p -Force -ErrorAction SilentlyContinue
+        if (Test-Path $p) { Write-Warning "Could not remove $p (in use, or needs Administrator)" } else { Say "Removed $p" }
+    }
 }
-$py = if (Get-Command py -ErrorAction SilentlyContinue) { @('py', '-3') } elseif (Get-Command python -ErrorAction SilentlyContinue) { @('python') } else { $null }
-if ($py) {
-    $pre = @($py | Select-Object -Skip 1)
-    & $py[0] @pre -m pip show hard-drive-monitor *> $null
-    if ($LASTEXITCODE -eq 0) { Say 'pip uninstall hard-drive-monitor'; & $py[0] @pre -m pip uninstall -y hard-drive-monitor | Out-Null }
-}
+if ((Test-Path $binDir) -and -not (Get-ChildItem $binDir -Force)) { Remove-Item $binDir -Force -ErrorAction SilentlyContinue }
 
 if ($state) {
     if ($state.shim -and (Test-Path $state.shim)) { Remove-Item $state.shim -Force; Say "Removed $($state.shim)" }

@@ -7,75 +7,86 @@
 #   ./install.sh --system       also symlink hdmon into /usr/local/bin (uses sudo)
 #   ./install.sh --sudoers      add a sudoers rule so hdmon may run smartctl as root (asks for sudo)
 #   ./install.sh --no-sudoers   never ask about the sudoers rule
+#   ./install.sh --binary FILE  install this hdmon binary
+#   ./install.sh --build        always build from source with CMake
 #
-# Order of preference: pipx -> pip install --user -> a private venv
-# (~/.local/share/hard-drive-monitor/venv, used when pip refuses --user installs,
-# e.g. "externally-managed-environment" on Debian 12 / Ubuntu 23.04+).
+# Uses a prebuilt binary when one matches this machine (in order: --binary FILE, ./hdmon next to
+# this script, dist/hdmon-<os>-<arch>, build/hdmon); otherwise builds from source with CMake
+# (needs cmake 3.16+ and a C++17 compiler). The binary is copied to ~/.local/bin/hdmon.
 set -euo pipefail
 
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PKG="hard-drive-monitor"
 BEGIN="# >>> hard-drive-monitor PATH (added by install.sh) >>>"
 END="# <<< hard-drive-monitor PATH <<<"
 STATE_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/hard-drive-monitor"
 [ "$(uname -s)" = "Darwin" ] && STATE_DIR="$HOME/Library/Application Support/hard-drive-monitor"
+BIN="$HOME/.local/bin"
 SYSTEM=0
 SERVICE=1
 SUDOERS=ask
+BINARY=""
+FORCE_BUILD=0
 
-for arg in "$@"; do
-  case "$arg" in
+while [ $# -gt 0 ]; do
+  case "$1" in
     --system) SYSTEM=1 ;;
     --no-service) SERVICE=0 ;;
     --sudoers) SUDOERS=yes ;;
     --no-sudoers) SUDOERS=no ;;
-    -h|--help) sed -n '2,15p' "$0"; exit 0 ;;
-    *) echo "unknown option: $arg" >&2; exit 2 ;;
+    --binary) shift; BINARY="${1:-}" ;;
+    --binary=*) BINARY="${1#--binary=}" ;;
+    --build) FORCE_BUILD=1 ;;
+    -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
+    *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
+  shift
 done
 
 say() { printf '==> %s\n' "$*"; }
 
-PY="${PYTHON:-}"
-if [ -z "$PY" ]; then
-  for c in python3 python; do
-    if command -v "$c" >/dev/null 2>&1; then PY="$(command -v "$c")"; break; fi
+case "$(uname -s)" in
+  Linux) OS=linux ;;
+  Darwin) OS=macos ;;
+  *) echo "install.sh supports Linux and macOS; on Windows use install.ps1" >&2; exit 1 ;;
+esac
+case "$(uname -m)" in
+  x86_64|amd64) ARCH=x86_64 ;;
+  arm64|aarch64) ARCH=arm64 ;;
+  *) ARCH="$(uname -m)" ;;
+esac
+
+runs() { [ -f "$1" ] && "$1" --version >/dev/null 2>&1; }
+
+build_from_source() {
+  command -v cmake >/dev/null 2>&1 || { echo "No prebuilt hdmon for $OS/$ARCH and cmake is not installed." >&2
+    echo "Install cmake + a C++17 compiler (Linux: sudo apt install cmake g++ | macOS: xcode-select --install; brew install cmake)" >&2
+    exit 1; }
+  local bdir; bdir="$(mktemp -d)"
+  say "Building hdmon from source with CMake (in $bdir)"
+  cmake -S "$SRC" -B "$bdir" -DCMAKE_BUILD_TYPE=Release -DHDMON_BUILD_TESTS=OFF >/dev/null
+  cmake --build "$bdir" --config Release --parallel >/dev/null
+  CANDIDATE="$bdir/hdmon"
+  [ -x "$CANDIDATE" ] || CANDIDATE="$bdir/Release/hdmon"
+  BUILD_DIR="$bdir"
+}
+
+CANDIDATE=""
+BUILD_DIR=""
+if [ "$FORCE_BUILD" = 0 ]; then
+  for c in "$BINARY" "$SRC/hdmon" "$SRC/dist/hdmon-$OS-$ARCH" "$SRC/dist/hdmon-$OS-universal" "$SRC/build/hdmon"; do
+    [ -n "$c" ] || continue
+    if runs "$c"; then CANDIDATE="$c"; break; fi
+    [ "$c" = "$BINARY" ] && { echo "--binary $BINARY does not run on this machine" >&2; exit 1; }
   done
 fi
-[ -n "$PY" ] || { echo "Python 3.8+ is required (Linux: sudo apt install python3 | macOS: brew install python)" >&2; exit 1; }
-"$PY" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)' \
-  || { echo "Python 3.8+ is required, found: $("$PY" --version 2>&1)" >&2; exit 1; }
+if [ -z "$CANDIDATE" ]; then build_from_source; else say "Using prebuilt binary $CANDIDATE"; fi
 
-METHOD=""
-BIN=""
-if command -v pipx >/dev/null 2>&1; then
-  say "Installing with pipx"
-  pipx install --force "$SRC"
-  BIN="$(pipx environment --value PIPX_BIN_DIR 2>/dev/null || true)"
-  [ -n "$BIN" ] || BIN="$HOME/.local/bin"
-  pipx ensurepath >/dev/null 2>&1 || true
-  METHOD="pipx"
-else
-  say "pipx not found; trying: $PY -m pip install --user"
-  if "$PY" -m pip install --user --upgrade "$SRC" 2>/tmp/hdmon-pip.$$; then
-    BIN="$("$PY" -m site --user-base)/bin"
-    METHOD="pip-user"
-  else
-    if grep -qi "externally-managed" /tmp/hdmon-pip.$$ 2>/dev/null || ! "$PY" -m pip --version >/dev/null 2>&1; then
-      say "pip --user is not allowed here; using a private venv in $STATE_DIR/venv"
-      mkdir -p "$STATE_DIR"
-      "$PY" -m venv "$STATE_DIR/venv" || { echo "python3 -m venv failed (Debian/Ubuntu: sudo apt install python3-venv)" >&2; exit 1; }
-      "$STATE_DIR/venv/bin/python" -m pip install --quiet --upgrade "$SRC"
-      BIN="$HOME/.local/bin"
-      mkdir -p "$BIN"
-      ln -sf "$STATE_DIR/venv/bin/hdmon" "$BIN/hdmon"
-      METHOD="venv"
-    else
-      cat /tmp/hdmon-pip.$$ >&2; rm -f /tmp/hdmon-pip.$$; exit 1
-    fi
-  fi
-  rm -f /tmp/hdmon-pip.$$
-fi
+mkdir -p "$BIN"
+tmpbin="$BIN/.hdmon.new.$$"
+cp "$CANDIDATE" "$tmpbin" && chmod 755 "$tmpbin" && mv -f "$tmpbin" "$BIN/hdmon"   # atomic replace, safe while running
+[ -n "$BUILD_DIR" ] && rm -rf "$BUILD_DIR"
+METHOD="binary"
+[ -n "$BUILD_DIR" ] && METHOD="built"
 
 [ -x "$BIN/hdmon" ] || { echo "install finished but $BIN/hdmon was not found" >&2; exit 1; }
 mkdir -p "$STATE_DIR"

@@ -1,0 +1,189 @@
+[
+  {
+    "file": "hdd_healthy.json",
+    "patch": {
+      "reallocated_sectors": 12
+    },
+    "health": 88,
+    "performance": 99,
+    "status": "WARNING",
+    "findings": [
+      {
+        "severity": "warning",
+        "message": "12 reallocated sectors - the drive is remapping bad spots to spare area",
+        "metric": "reallocated_sectors"
+      }
+    ]
+  },
+  {
+    "file": "hdd_healthy.json",
+    "patch": {
+      "udma_crc_errors": 5
+    },
+    "health": 100,
+    "performance": 95,
+    "status": "WARNING",
+    "findings": [
+      {
+        "severity": "warning",
+        "message": "5 UDMA CRC errors - data got garbled on the cable; reseat or replace the SATA cable/port",
+        "metric": "udma_crc_errors"
+      }
+    ]
+  },
+  {
+    "file": "nvme_healthy.json",
+    "patch": {
+      "critical_warning": 8
+    },
+    "health": 20,
+    "performance": 100,
+    "status": "CRITICAL",
+    "findings": [
+      {
+        "severity": "critical",
+        "message": "NVMe critical warning (bit 3): drive has switched to READ-ONLY mode",
+        "metric": "critical_warning"
+      },
+      {
+        "severity": "info",
+        "message": "14 unsafe shutdowns (power lost without a clean shutdown); not a defect by itself",
+        "metric": "unsafe_shutdowns"
+      }
+    ]
+  },
+  {
+    "file": "nvme_healthy.json",
+    "patch": {
+      "critical_warning": 2
+    },
+    "health": 97,
+    "performance": 100,
+    "status": "WARNING",
+    "findings": [
+      {
+        "severity": "warning",
+        "message": "NVMe critical warning (bit 1): temperature is outside the safe range",
+        "metric": "critical_warning"
+      },
+      {
+        "severity": "info",
+        "message": "14 unsafe shutdowns (power lost without a clean shutdown); not a defect by itself",
+        "metric": "unsafe_shutdowns"
+      }
+    ]
+  },
+  {
+    "file": "nvme_healthy.json",
+    "patch": {
+      "available_spare": 5
+    },
+    "health": 10,
+    "performance": 100,
+    "status": "CRITICAL",
+    "findings": [
+      {
+        "severity": "critical",
+        "message": "Available spare 5% is below the 10% threshold",
+        "metric": "available_spare"
+      },
+      {
+        "severity": "info",
+        "message": "14 unsafe shutdowns (power lost without a clean shutdown); not a defect by itself",
+        "metric": "unsafe_shutdowns"
+      }
+    ]
+  },
+  {
+    "file": "nvme_healthy.json",
+    "patch": {
+      "media_errors": 12
+    },
+    "health": 67,
+    "performance": 90,
+    "status": "CRITICAL",
+    "findings": [
+      {
+        "severity": "critical",
+        "message": "12 NVMe media errors - unrecovered data-integrity errors",
+        "metric": "media_errors"
+      },
+      {
+        "severity": "info",
+        "message": "14 unsafe shutdowns (power lost without a clean shutdown); not a defect by itself",
+        "metric": "unsafe_shutdowns"
+      }
+    ]
+  },
+  {
+    "file": "nvme_healthy.json",
+    "patch": {
+      "media_errors": 1
+    },
+    "health": 94,
+    "performance": 99,
+    "status": "WARNING",
+    "findings": [
+      {
+        "severity": "warning",
+        "message": "1 NVMe media error - unrecovered data-integrity errors",
+        "metric": "media_errors"
+      },
+      {
+        "severity": "info",
+        "message": "14 unsafe shutdowns (power lost without a clean shutdown); not a defect by itself",
+        "metric": "unsafe_shutdowns"
+      }
+    ]
+  },
+  {
+    "file": "ssd_sata_healthy.json",
+    "patch": {
+      "wear_percent_used": 100
+    },
+    "health": 0,
+    "performance": 100,
+    "status": "CRITICAL",
+    "findings": [
+      {
+        "severity": "critical",
+        "message": "SSD wear: 100% of rated write endurance used - plan a replacement",
+        "metric": "wear_percent_used"
+      }
+    ]
+  },
+  {
+    "file": "hdd_healthy.json",
+    "patch": {
+      "failing_now": [
+        "5 Reallocated_Sector_Ct"
+      ]
+    },
+    "health": 10,
+    "performance": 100,
+    "status": "CRITICAL",
+    "findings": [
+      {
+        "severity": "critical",
+        "message": "Attribute below its failure threshold now: 5 Reallocated_Sector_Ct",
+        "metric": "failing_now"
+      }
+    ]
+  },
+  {
+    "file": "hdd_healthy.json",
+    "patch": {
+      "smart_passed": false
+    },
+    "health": 5,
+    "performance": 100,
+    "status": "CRITICAL",
+    "findings": [
+      {
+        "severity": "critical",
+        "message": "Drive's own SMART self-assessment says FAILED - back up now",
+        "metric": "smart_status"
+      }
+    ]
+  }
+]

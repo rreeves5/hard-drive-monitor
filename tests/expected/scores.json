@@ -1,0 +1,349 @@
+[
+  {
+    "file": "hdd_healthy.json",
+    "device": "/dev/sda",
+    "key": "WDC WD40EFRX-68N32N0|WD-SYNTH00000001",
+    "kind": "HDD",
+    "model": "WDC WD40EFRX-68N32N0",
+    "serial": "WD-SYNTH00000001",
+    "capacity_bytes": 4000787030016,
+    "temperature_c": 34,
+    "power_on_hours": 23456,
+    "power_cycles": 312,
+    "smart_available": true,
+    "smart_passed": true,
+    "volumes": [],
+    "metrics": {
+      "reallocated_sectors": 0,
+      "pending_sectors": 0,
+      "offline_uncorrectable": 0,
+      "udma_crc_errors": 0
+    },
+    "health": 100,
+    "performance": 100,
+    "status": "OK",
+    "findings": []
+  },
+  {
+    "file": "hdd_failing.json",
+    "device": "/dev/sdb",
+    "key": "ST2000DM008-2FR102|ZFL0SYNTH02",
+    "kind": "HDD",
+    "model": "ST2000DM008-2FR102",
+    "serial": "ZFL0SYNTH02",
+    "capacity_bytes": 2000398934016,
+    "temperature_c": 41,
+    "power_on_hours": 38211,
+    "power_cycles": 2187,
+    "smart_available": true,
+    "smart_passed": true,
+    "volumes": [],
+    "metrics": {
+      "reallocated_sectors": 120,
+      "reported_uncorrectable": 3,
+      "command_timeout": 1,
+      "pending_sectors": 16,
+      "offline_uncorrectable": 16,
+      "udma_crc_errors": 0
+    },
+    "health": 10,
+    "performance": 62,
+    "status": "CRITICAL",
+    "findings": [
+      {
+        "severity": "critical",
+        "message": "120 reallocated sectors - the drive is remapping bad spots to spare area",
+        "metric": "reallocated_sectors"
+      },
+      {
+        "severity": "critical",
+        "message": "16 pending sectors - unreadable spots waiting to be remapped; data there may already be lost",
+        "metric": "pending_sectors"
+      },
+      {
+        "severity": "critical",
+        "message": "16 offline uncorrectable sectors - found by the drive's own surface scan and could not be repaired",
+        "metric": "offline_uncorrectable"
+      },
+      {
+        "severity": "warning",
+        "message": "3 reported uncorrectable errors - reads failed even after error correction",
+        "metric": "reported_uncorrectable"
+      },
+      {
+        "severity": "warning",
+        "message": "1 command timeout - the drive stalled on operations (failing drive, cable or power)",
+        "metric": "command_timeout"
+      }
+    ]
+  },
+  {
+    "file": "ssd_sata_healthy.json",
+    "device": "/dev/sdc",
+    "key": "Samsung SSD 860 EVO 500GB|S3Z1NB0SYNTH03",
+    "kind": "SSD",
+    "model": "Samsung SSD 860 EVO 500GB",
+    "serial": "S3Z1NB0SYNTH03",
+    "capacity_bytes": 500107862016,
+    "temperature_c": 31,
+    "power_on_hours": 21877,
+    "power_cycles": 1544,
+    "smart_available": true,
+    "smart_passed": true,
+    "volumes": [],
+    "metrics": {
+      "reallocated_sectors": 0,
+      "reported_uncorrectable": 0,
+      "udma_crc_errors": 0,
+      "wear_percent_used": 6,
+      "wear_source": "device statistics"
+    },
+    "health": 94,
+    "performance": 100,
+    "status": "OK",
+    "findings": []
+  },
+  {
+    "file": "nvme_healthy.json",
+    "device": "/dev/nvme0",
+    "key": "Samsung SSD 970 EVO Plus 1TB|S4EWNX0SYNTH04",
+    "kind": "NVMe",
+    "model": "Samsung SSD 970 EVO Plus 1TB",
+    "serial": "S4EWNX0SYNTH04",
+    "capacity_bytes": 1000204886016,
+    "temperature_c": 38,
+    "power_on_hours": 5120,
+    "power_cycles": 890,
+    "smart_available": true,
+    "smart_passed": true,
+    "volumes": [],
+    "metrics": {
+      "wear_percent_used": 3,
+      "media_errors": 0,
+      "critical_warning": 0,
+      "available_spare": 100,
+      "available_spare_threshold": 10,
+      "unsafe_shutdowns": 14,
+      "error_log_entries": 0,
+      "warning_temp_minutes": 0,
+      "critical_temp_minutes": 0,
+      "data_written_tb": 16.0
+    },
+    "health": 97,
+    "performance": 100,
+    "status": "OK",
+    "findings": [
+      {
+        "severity": "info",
+        "message": "14 unsafe shutdowns (power lost without a clean shutdown); not a defect by itself",
+        "metric": "unsafe_shutdowns"
+      }
+    ]
+  },
+  {
+    "file": "nvme_worn.json",
+    "device": "/dev/nvme1",
+    "key": "INTEL SSDPEKNW512G8|BTNH9SYNTH05",
+    "kind": "NVMe",
+    "model": "INTEL SSDPEKNW512G8",
+    "serial": "BTNH9SYNTH05",
+    "capacity_bytes": 512110190592,
+    "temperature_c": 49,
+    "power_on_hours": 31877,
+    "power_cycles": 4410,
+    "smart_available": true,
+    "smart_passed": true,
+    "volumes": [],
+    "metrics": {
+      "wear_percent_used": 62,
+      "media_errors": 0,
+      "critical_warning": 0,
+      "available_spare": 64,
+      "available_spare_threshold": 10,
+      "unsafe_shutdowns": 233,
+      "error_log_entries": 12,
+      "warning_temp_minutes": 95,
+      "critical_temp_minutes": 0,
+      "data_written_tb": 313.34
+    },
+    "health": 38,
+    "performance": 97,
+    "status": "WARNING",
+    "findings": [
+      {
+        "severity": "warning",
+        "message": "Health score 38% is below 70% - mainly NVMe wear: 62% of rated write endurance used; Available spare 64% (threshold 10%)",
+        "metric": "health"
+      },
+      {
+        "severity": "info",
+        "message": "NVMe wear: 62% of rated write endurance used",
+        "metric": "wear_percent_used"
+      },
+      {
+        "severity": "info",
+        "message": "Available spare 64% (threshold 10%)",
+        "metric": "available_spare"
+      },
+      {
+        "severity": "info",
+        "message": "Has spent 95 minutes above its warning/critical temperature (throttling)",
+        "metric": "warning_temp_minutes"
+      },
+      {
+        "severity": "info",
+        "message": "233 unsafe shutdowns (power lost without a clean shutdown); not a defect by itself",
+        "metric": "unsafe_shutdowns"
+      }
+    ]
+  },
+  {
+    "file": "later/hdd_failing.json",
+    "device": "/dev/sdb",
+    "key": "ST2000DM008-2FR102|ZFL0SYNTH02",
+    "kind": "HDD",
+    "model": "ST2000DM008-2FR102",
+    "serial": "ZFL0SYNTH02",
+    "capacity_bytes": 2000398934016,
+    "temperature_c": 41,
+    "power_on_hours": 38236,
+    "power_cycles": 2187,
+    "smart_available": true,
+    "smart_passed": true,
+    "volumes": [],
+    "metrics": {
+      "reallocated_sectors": 152,
+      "reported_uncorrectable": 3,
+      "command_timeout": 1,
+      "pending_sectors": 21,
+      "offline_uncorrectable": 19,
+      "udma_crc_errors": 0
+    },
+    "health": 6,
+    "performance": 53,
+    "status": "CRITICAL",
+    "findings": [
+      {
+        "severity": "critical",
+        "message": "152 reallocated sectors - the drive is remapping bad spots to spare area",
+        "metric": "reallocated_sectors"
+      },
+      {
+        "severity": "critical",
+        "message": "21 pending sectors - unreadable spots waiting to be remapped; data there may already be lost",
+        "metric": "pending_sectors"
+      },
+      {
+        "severity": "critical",
+        "message": "19 offline uncorrectable sectors - found by the drive's own surface scan and could not be repaired",
+        "metric": "offline_uncorrectable"
+      },
+      {
+        "severity": "warning",
+        "message": "3 reported uncorrectable errors - reads failed even after error correction",
+        "metric": "reported_uncorrectable"
+      },
+      {
+        "severity": "warning",
+        "message": "1 command timeout - the drive stalled on operations (failing drive, cable or power)",
+        "metric": "command_timeout"
+      }
+    ]
+  },
+  {
+    "file": "windows/windows_inventory.json",
+    "device": "PhysicalDrive0",
+    "key": "Samsung SSD 970 EVO Plus 1TB|0025_3852_91B0_SYN1.",
+    "kind": "NVMe",
+    "model": "Samsung SSD 970 EVO Plus 1TB",
+    "serial": "0025_3852_91B0_SYN1.",
+    "capacity_bytes": 1000204886016,
+    "temperature_c": 39,
+    "power_on_hours": 6120,
+    "power_cycles": 902,
+    "smart_available": true,
+    "smart_passed": true,
+    "volumes": [
+      "C:"
+    ],
+    "metrics": {
+      "windows_health_status": "Healthy",
+      "windows_operational_status": "OK",
+      "wear_percent_used": 4,
+      "wear_source": "Get-StorageReliabilityCounter",
+      "uncorrected_errors": 0
+    },
+    "health": 96,
+    "performance": 100,
+    "status": "OK",
+    "findings": []
+  },
+  {
+    "file": "windows/windows_inventory.json",
+    "device": "PhysicalDrive1",
+    "key": "ST3000DM001-1CH166|Z1F2SYNTH1",
+    "kind": "HDD",
+    "model": "ST3000DM001-1CH166",
+    "serial": "Z1F2SYNTH1",
+    "capacity_bytes": 3000592982016,
+    "temperature_c": 44,
+    "power_on_hours": 41877,
+    "power_cycles": 3311,
+    "smart_available": true,
+    "smart_passed": null,
+    "volumes": [
+      "D:"
+    ],
+    "metrics": {
+      "windows_health_status": "Warning",
+      "windows_operational_status": "OK",
+      "uncorrected_errors": 7
+    },
+    "health": 86,
+    "performance": 100,
+    "status": "WARNING",
+    "findings": [
+      {
+        "severity": "warning",
+        "message": "7 uncorrected read/write errors reported by Windows",
+        "metric": "uncorrected_errors"
+      },
+      {
+        "severity": "warning",
+        "message": "Windows reports this disk's health as Warning",
+        "metric": "windows_health_status"
+      }
+    ]
+  },
+  {
+    "file": "windows/windows_inventory.json",
+    "device": "PhysicalDrive2",
+    "key": "WDC WD20EARX-00PASB0|WD-WMAZASYNTH2",
+    "kind": "HDD",
+    "model": "WDC WD20EARX-00PASB0",
+    "serial": "WD-WMAZASYNTH2",
+    "capacity_bytes": 2000398934016,
+    "temperature_c": null,
+    "power_on_hours": null,
+    "power_cycles": null,
+    "smart_available": true,
+    "smart_passed": false,
+    "volumes": [
+      "G:"
+    ],
+    "metrics": {
+      "windows_health_status": "Unhealthy",
+      "windows_operational_status": "Predictive Failure"
+    },
+    "health": 5,
+    "performance": 100,
+    "status": "CRITICAL",
+    "findings": [
+      {
+        "severity": "critical",
+        "message": "Drive's own SMART self-assessment says FAILED - back up now",
+        "metric": "smart_status"
+      }
+    ]
+  }
+]

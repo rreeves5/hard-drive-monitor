@@ -1,20 +1,20 @@
-# Python
+# Build output (release binaries are attached to GitHub releases by CI, not committed)
+build/
+build-*/
+cmake-build-*/
+dist/
+out/
+CMakeUserPresets.json
+*.o
+*.obj
+*.exe
+*.pdb
+
+# Dev tools (Python is only used by tools/ and tests/fixtures/make_fixtures.py)
 __pycache__/
 *.py[cod]
-*.egg-info/
-build/
-dist/
-.eggs/
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.coverage
-htmlcov/
-
-# Virtual environments
 .venv/
 venv/
-env/
 
 # Local data (never commit real drive data or credentials)
 *.db
