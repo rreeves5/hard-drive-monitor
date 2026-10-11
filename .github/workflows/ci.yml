@@ -135,7 +135,7 @@ jobs:
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DHDMON_BUILD_GUI=ON -DHDMON_WX_FETCH=ON -DHDMON_BUILD_TESTS=OFF ${{ matrix.cmake_args }}
 
       - name: Build hdmon-gui
-        run: cmake --build build --config Release --parallel --target hdmon-gui
+        run: cmake --build build --config Release --parallel 4 --target hdmon-gui
 
       - name: Stage + smoke test
         shell: bash

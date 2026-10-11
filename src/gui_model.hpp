@@ -1,6 +1,7 @@
 // Toolkit-free logic behind the hdmon-gui desktop app (port of the VB.NET DiskMonitor tray app).
 // Everything here is unit tested; gui/*.cpp only draws it.
 #pragma once
+#include "palette.hpp"
 #include <string>
 #include <utility>
 #include <vector>
@@ -14,8 +15,8 @@ namespace hdmon::gui {
 std::string tray_status(const std::vector<Result>& results);
 int gui_rank(const std::string& status);
 // Strong colour for the tray circle and the soft row tint (RGB hex, same values as the VB app).
-std::string status_color(const std::string& status);   // #00FF00 #FFCC00 #D0312D #8A8F98
-std::string row_tint(const std::string& status);       // #00FF00 #FFCC00 #F8CDCB #E4E6EA
+std::string status_color(const std::string& status);   // palette::STATUS_* (#00FF00 #FFFF00 #FF0000 #8A8F98)
+std::string row_tint(const std::string& status);       // palette::ROW_*    (#00FF00 #FFFF00 #FF0000 #E4E6EA)
 std::string status_label(const std::string& status);   // "OK", "Warning", "Critical", "No SMART data"
 
 // "C:" / "E: F:" (Windows letters), "/ /home" (mounts), "Disk 2" (Windows, no letter), "sda".

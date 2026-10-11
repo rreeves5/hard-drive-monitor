@@ -32,10 +32,10 @@ TEST_CASE("tray colour = worst drive, VB order UNKNOWN < OK < WARNING < CRITICAL
     CHECK(g::tray_status({fake("CRITICAL", 10), fake("WARNING", 50), fake("OK", 100)}) == "CRITICAL");
     CHECK(g::tray_status(fixture_results()) == "CRITICAL");                 // sdb in the fixtures
     CHECK(g::status_color("OK") == "#00FF00");
-    CHECK(g::status_color("WARNING") == "#FFCC00");
-    CHECK(g::status_color("CRITICAL") == "#D0312D");
+    CHECK(g::status_color("WARNING") == "#FFFF00");
+    CHECK(g::status_color("CRITICAL") == "#FF0000");
     CHECK(g::status_color("UNKNOWN") == "#8A8F98");
-    CHECK(g::row_tint("CRITICAL") == "#F8CDCB");
+    CHECK(g::row_tint("CRITICAL") == "#FF0000");
     CHECK(g::row_tint("UNKNOWN") == "#E4E6EA");
     CHECK(g::status_label("UNKNOWN") == "No SMART data");
 }
@@ -161,4 +161,38 @@ TEST_CASE("GUI update assets") {
     CHECK(ends_with(update_state_path("/x/history.db", UpdateFlavor::Gui), "update-state-gui.json"));
     CHECK(ends_with(update_state_path("/x/history.db"), "update-state.json"));
 }
+}
+
+TEST_CASE("palette: exact status colours are pinned") {
+    namespace p = hdmon::palette;
+    auto eq = [](p::Rgb c, int r, int gg, int b) { return c.r == r && c.g == gg && c.b == b; };
+    // Tray circle / status
+    CHECK(std::string(p::STATUS_OK) == "#00FF00");
+    CHECK(std::string(p::STATUS_WARNING) == "#FFFF00");
+    CHECK(std::string(p::STATUS_CRITICAL) == "#FF0000");
+    CHECK(std::string(p::STATUS_UNKNOWN) == "#8A8F98");
+    CHECK(eq(p::to_rgb(p::STATUS_OK), 0, 255, 0));
+    CHECK(eq(p::to_rgb(p::STATUS_WARNING), 255, 255, 0));
+    CHECK(eq(p::to_rgb(p::ROW_WARNING), 255, 255, 0));
+    CHECK(eq(p::to_rgb(p::ROW_OK), 0, 255, 0));
+    CHECK(eq(p::to_rgb(p::STATUS_CRITICAL), 255, 0, 0));
+    CHECK(eq(p::to_rgb(p::STATUS_UNKNOWN), 138, 143, 152));
+    // Row tints, black text
+    CHECK(std::string(p::ROW_OK) == "#00FF00");
+    CHECK(std::string(p::ROW_WARNING) == "#FFFF00");
+    CHECK(std::string(p::ROW_CRITICAL) == "#FF0000");
+    CHECK(std::string(p::ROW_UNKNOWN) == "#E4E6EA");
+    CHECK(eq(p::to_rgb(p::ROW_CRITICAL), 255, 0, 0));
+    CHECK(eq(p::to_rgb(p::ROW_UNKNOWN), 228, 230, 234));
+    CHECK(eq(p::to_rgb(p::ROW_TEXT), 0, 0, 0));
+    // GUI helpers go through the palette
+    CHECK(g::status_color("CRITICAL") == p::STATUS_CRITICAL);
+    CHECK(g::row_tint("CRITICAL") == p::ROW_CRITICAL);
+    CHECK(g::status_color("") == p::STATUS_UNKNOWN);
+    CHECK(g::row_tint("") == p::ROW_UNKNOWN);
+    // Tray icon geometry (VB FillEllipse 2,2,28,28 on 32 px)
+    CHECK(p::ICON_SIZE == 32);
+    CHECK(p::CIRCLE_X == 2);
+    CHECK(p::CIRCLE_Y == 2);
+    CHECK(p::CIRCLE_D == 28);
 }

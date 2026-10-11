@@ -38,20 +38,26 @@ namespace g = hdmon::gui;
 static const char* GUI_VERSION = HDMON_GUI_VERSION;   // "Beta V x.y.z" (same as the CLI)
 static wxString U(const std::string& s) { return wxString::FromUTF8(s.c_str()); }
 static std::string S(const wxString& s) { return std::string(s.utf8_str()); }
-static wxColour C(const std::string& hex) { return wxColour(U(hex)); }
+static wxColour C(const std::string& hex) {
+    auto c = hdmon::palette::to_rgb(hex.c_str());   // exact palette RGB, no theme adjustment
+    return wxColour(c.r, c.g, c.b);
+}
 
-// Plain filled circle (VB TrayIcons.Circle: 28 px circle in a 32 px icon), anti-aliased by hand.
-static wxBitmap circle_bitmap(const std::string& hex, int size = 32) {
+// Plain filled circle, exactly like VB TrayIcons.Circle: FillEllipse(2, 2, 28, 28) on a transparent
+// 32 px bitmap with SmoothingMode.AntiAlias. Colour is the exact palette RGB; only edge alpha varies.
+static wxBitmap circle_bitmap(const std::string& hex) {
+    namespace p = hdmon::palette;
     wxColour c = C(hex);
+    const int size = p::ICON_SIZE;
     wxImage img(size, size);
     img.InitAlpha();
-    double r = size * 14.0 / 32.0, cx = size / 2.0, cy = size / 2.0;
+    const double r = p::CIRCLE_D / 2.0, cx = p::CIRCLE_X + r, cy = p::CIRCLE_Y + r;
     for (int y = 0; y < size; ++y)
         for (int x = 0; x < size; ++x) {
             double dx = x + 0.5 - cx, dy = y + 0.5 - cy;
             double a = std::min(1.0, std::max(0.0, r + 0.5 - std::sqrt(dx * dx + dy * dy)));
             img.SetRGB(x, y, c.Red(), c.Green(), c.Blue());
-            img.SetAlpha(x, y, static_cast<unsigned char>(a * 255));
+            img.SetAlpha(x, y, static_cast<unsigned char>(a * 255 + 0.5));
         }
     return wxBitmap(img);
 }
@@ -385,7 +391,7 @@ public:
             list_->SetItem(i, 3, U(g::temp_text(d)));
             list_->SetItem(i, 4, U(g::health_text(a)));
             list_->SetItemBackgroundColour(i, C(g::row_tint(a.status)));
-            list_->SetItemTextColour(i, *wxBLACK);
+            list_->SetItemTextColour(i, C(hdmon::palette::ROW_TEXT));
         }
         list_->Thaw();
     }

@@ -22,17 +22,17 @@ std::string tray_status(const std::vector<Result>& results) {
 }
 
 std::string status_color(const std::string& s) {
-    if (s == "OK") return "#00FF00";
-    if (s == "WARNING") return "#FFCC00";
-    if (s == "CRITICAL") return "#D0312D";
-    return "#8A8F98";
+    if (s == "OK") return palette::STATUS_OK;
+    if (s == "WARNING") return palette::STATUS_WARNING;
+    if (s == "CRITICAL") return palette::STATUS_CRITICAL;
+    return palette::STATUS_UNKNOWN;
 }
 
 std::string row_tint(const std::string& s) {
-    if (s == "OK") return "#00FF00";
-    if (s == "WARNING") return "#FFCC00";
-    if (s == "CRITICAL") return "#F8CDCB";
-    return "#E4E6EA";
+    if (s == "OK") return palette::ROW_OK;
+    if (s == "WARNING") return palette::ROW_WARNING;
+    if (s == "CRITICAL") return palette::ROW_CRITICAL;
+    return palette::ROW_UNKNOWN;
 }
 
 std::string status_label(const std::string& s) {
