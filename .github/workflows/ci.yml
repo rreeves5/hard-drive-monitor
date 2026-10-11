@@ -120,7 +120,13 @@ jobs:
           merge-multiple: true
       - name: Checksums
         run: cd release && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
+      - name: Release title
+        id: ver
+        shell: bash
+        run: echo "v=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
       - uses: softprops/action-gh-release@v2
         with:
           files: release/*
+          name: "Hard Drive Monitor Beta V ${{ steps.ver.outputs.v }}"
+          make_latest: true
           generate_release_notes: true
