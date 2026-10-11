@@ -21,6 +21,14 @@ Grab the ready-to-run executable for your system from the
 | macOS (Apple Silicon + Intel) | [`hdmon-macos-universal`](https://github.com/rreeves5/hard-drive-monitor/releases/latest/download/hdmon-macos-universal) |
 | Linux (x86_64, static) | [`hdmon-linux-x86_64`](https://github.com/rreeves5/hard-drive-monitor/releases/latest/download/hdmon-linux-x86_64) |
 
+Desktop app (tray icon + window, see [Desktop app](#desktop-app-hdmon-gui)):
+
+| OS | File |
+|---|---|
+| Windows (64-bit) | [`hdmon-gui-windows-x86_64.exe`](https://github.com/rreeves5/hard-drive-monitor/releases/latest/download/hdmon-gui-windows-x86_64.exe) |
+| macOS (Apple Silicon + Intel) | [`Hard-Drive-Monitor-macos.zip`](https://github.com/rreeves5/hard-drive-monitor/releases/latest/download/Hard-Drive-Monitor-macos.zip) (contains `Hard Drive Monitor.app`) |
+| Linux (x86_64, needs GTK 3) | [`hdmon-gui-linux-x86_64`](https://github.com/rreeves5/hard-drive-monitor/releases/latest/download/hdmon-gui-linux-x86_64) |
+
 `SHA256SUMS.txt` in the release lists checksums. You still need smartmontools installed
 (`winget install smartmontools.smartmontools`, `brew install smartmontools`, or `sudo apt install smartmontools`).
 To put `hdmon` on your PATH and turn on the background check, use the installer below.
@@ -82,6 +90,66 @@ smartmontools`, `brew install smartmontools`, or `winget install smartmontools.s
 - `--from-json FILE_OR_DIR` (status, detail, check, watch, selftest --results): read saved
   `smartctl -x --json` output instead of live drives. Useful for demos, for checking a drive from another
   machine, or for bug reports. A `--from-json` run is **not** written to history unless you add `--record`.
+
+## Desktop app (hdmon-gui)
+
+`hdmon-gui` is the desktop version of Hard Drive Monitor. It replaces the Windows-only VB.NET **Disk Monitor**
+tray app (Beta 0.05), rewritten in C++ on top of the same core as the `hdmon` command. It uses the same
+scanner, health scores, history database, config file, alerts and updater, and has the same look and
+behaviour on Windows, macOS and Linux. The `hdmon` command is unchanged; the app is a separate program.
+
+| Main window | Tray menu |
+|---|---|
+| ![Main window](docs/gui-main.png) | ![Tray menu](docs/gui-tray-menu.png) |
+| **Options** (updates are off by default) | **Details** |
+| ![Options](docs/gui-options.png) | ![Details](docs/gui-details.png) |
+| **About** | **Windows build (running under Wine)** |
+| ![About](docs/gui-about.png) | ![Windows build under Wine](docs/gui-windows-wine.png) |
+
+*Screenshots use the synthetic test drives (`hdmon-gui --from-json tests/fixtures`) on Linux/GTK under Xvfb,
+regenerated with `tools/gui_screenshots.sh`. The Windows one is the cross-compiled exe running under Wine.*
+
+- **Tray icon:** a plain circle in the colour of the **worst** drive. Green = OK, yellow = WARNING, red =
+  CRITICAL, gray = no data/no SMART. Statuses come from the same scoring as `hdmon status`. Hover to see each
+  drive (letter, mount point or device) with its health %. Right-click (on macOS, click) for **Open, Scan Now,
+  Options, About, Exit**. Double-click opens the window.
+- **Window:** one row per drive (Drive, Model, Size, Temp, Health), each tinted with its own status colour.
+  Double-click a row (or right-click > Details) for the details: the counters the drive reports plus the full
+  `hdmon detail` report. The title bar and status line show when a scan is running.
+- **Scans** every 60 minutes by default (Options > Scan every N minutes) and on **Scan Now**. Every scan goes into
+  the **same history database as the CLI**, so `hdmon history` shows both. When something gets worse (the same
+  rules as `hdmon check` alerts), you get a notification plus a red "Drive in danger" window, and an e-mail if
+  `[email]` is enabled. Turn this off with "Alert me when a drive is in danger".
+- **Options:** Start at login (off by default, like the VB app), danger alerts, scan interval, and **Updates**:
+  "Check for updates automatically" and "Install updates automatically" are **both off by default**. They are
+  the same `[update] auto_check` / `auto_install` settings the CLI uses. **Check now** asks GitHub, and installs
+  only after you confirm, with a SHA-256 check. On macOS it opens the download page instead.
+  Settings are stored in `config.toml` (`[gui] alert_on_danger`, `scan_interval_minutes`).
+- **Start at login** works differently per system:
+  - Windows: a Task Scheduler logon task with highest privileges (an app that requires admin is skipped when
+    started from the Run key). If the app isn't elevated, it uses the `HKCU\...\Run` key.
+  - macOS: `~/Library/LaunchAgents/com.rreeves5.hard-drive-monitor.gui.plist`.
+  - Linux: `~/.config/autostart/hard-drive-monitor.desktop`.
+- **Admin rights:**
+  - Windows: `hdmon-gui.exe` asks for elevation on start, like Disk Monitor did (embedded manifest with
+    `requireAdministrator`). Without smartmontools it falls back to the Windows Storage counters.
+  - Linux/macOS: the same `sudo` rules as the CLI apply (see [smartctl needs root](#smartctl-needs-root-sudo-notes)).
+    Drives it can't read show up gray, and the status line explains why.
+- **Command line:** `hdmon-gui [--show] [--from-json DIR] [--config FILE] [--db FILE] [--version]`. `--show` opens
+  the window at start; otherwise the app starts in the tray, like Disk Monitor. If the desktop has no tray
+  (e.g. GNOME without an AppIndicator extension), the window opens and closing it quits.
+- **Installers:** `install.sh` / `install.ps1` also install the app when a build is present (`dist/` or next to the
+  script). On Windows that adds a Start Menu shortcut, on Linux a menu entry, and on macOS it copies the app
+  to `~/Applications`. Skip it with `--no-gui` / `-NoGui`.
+- **Building it:** it uses [wxWidgets](https://www.wxwidgets.org) 3.2 (native widgets on every OS, wxWindows
+  licence):
+
+  ```sh
+  sudo apt install libwxgtk3.2-dev          # Linux, system wxWidgets
+  cmake -S . -B build-gui -DHDMON_BUILD_GUI=ON && cmake --build build-gui --target hdmon-gui
+  # Windows/macOS (or a self-contained Linux build): download wxWidgets and link it statically
+  cmake -S . -B build-gui -DHDMON_BUILD_GUI=ON -DHDMON_WX_FETCH=ON && cmake --build build-gui --config Release --target hdmon-gui
+  ```
 
 ## Install
 
@@ -442,7 +510,8 @@ python3 tools/render_demo.py               # regenerate demo-status.png from bui
 ```
 
 Layout: `src/` (one module per concern: `smart` discovery/parsing incl. the Windows fallback, `health` scoring,
-`history` SQLite, `alerts`, `service` scheduling, `update` opt-in self-update, `render`, `cli`), `tests/` (doctest), `third_party/`.
+`history` SQLite, `alerts`, `service` scheduling, `update` opt-in self-update, `render`, `cli`, plus `gui_model` /
+`autostart` for the desktop app), `gui/` (the wxWidgets app), `cmake/gui.cmake`, `tests/` (doctest), `third_party/`.
 Platform-specific code is behind `#ifdef _WIN32` / `__APPLE__`; commands that only exist on one OS
 (`diskutil`, `lsblk`, PowerShell, `schtasks`, `launchctl`, `systemctl`) are run as child processes.
 
@@ -455,7 +524,7 @@ C++ test suite checks the native build against it: identical Health/Performance/
 fixture and scenario, identical alert text, and byte-identical `status` / `detail` / `selftest` output.
 
 CI (GitHub Actions) builds and tests on Ubuntu, macOS and Windows, smoke-tests the installers, and on a
-`v*` tag attaches the Linux, macOS and Windows binaries (plus `SHA256SUMS.txt`) to a GitHub release.
+`v*` tag attaches the Linux, macOS and Windows binaries, the desktop app builds (`hdmon-gui-*`, `Hard-Drive-Monitor-macos.zip`) and `SHA256SUMS.txt` to a GitHub release.
 
 ### Changes from the Python version (0.1.x)
 

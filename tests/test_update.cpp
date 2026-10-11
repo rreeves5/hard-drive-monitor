@@ -84,8 +84,8 @@ TEST_CASE("version numbers and comparison") {
     CHECK(compare_versions("v0.3", "0.2.9") > 0);
     CHECK(compare_versions("v1.0", "1.0.0") == 0);
     CHECK(display_version("v0.2.2") == "Beta V 0.2.2");
-    CHECK(compare_versions(VERSION, "v0.2.1") > 0);           // this build is 0.2.2
-    CHECK(std::string(VERSION) == "Beta V 0.2.2");
+    CHECK(compare_versions(VERSION, "v0.2.1") > 0);           // this build is newer than 0.2.1
+    CHECK(starts_with(VERSION, "Beta V "));
 }
 
 TEST_CASE("asset names per OS/arch") {
@@ -202,20 +202,20 @@ TEST_CASE("update --check: up to date / available / json / no release") {
     net.publish("v0.2.1", all_assets());
     r = run({"update", "--check", "--config", cfg});
     CHECK(r.rc == 0);
-    CHECK(th::has(r.out, "Up to date: Beta V 0.2.2 (newer than the latest release, Beta V 0.2.1)"));
-    net.publish("v0.2.2", all_assets());
+    CHECK(th::has(r.out, std::string("Up to date: ") + VERSION + " (newer than the latest release, Beta V 0.2.1)"));
+    net.publish("v" + std::string(VERSION).substr(7), all_assets());   // same version as this build
     CHECK(th::has(run({"update", "--check", "--config", cfg}).out, "Up to date"));
-    net.publish("v0.3.0", all_assets());
+    net.publish("v9.3.0", all_assets());
     r = run({"update", "--check", "--config", cfg});
     CHECK(r.rc == 1);
-    CHECK(th::has(r.out, "Update available: Beta V 0.3.0"));
-    CHECK(th::has(r.out, "https://github.com/rreeves5/hard-drive-monitor/releases/tag/v0.3.0"));
+    CHECK(th::has(r.out, "Update available: Beta V 9.3.0"));
+    CHECK(th::has(r.out, "https://github.com/rreeves5/hard-drive-monitor/releases/tag/v9.3.0"));
     r = run({"update", "--check", "--json", "--config", cfg});
     json j = json::parse(r.out);
     CHECK(j["update_available"] == true);
-    CHECK(j["latest"] == "Beta V 0.3.0");
-    CHECK(j["latest_tag"] == "v0.3.0");
-    CHECK(j["current"] == "Beta V 0.2.2");
+    CHECK(j["latest"] == "Beta V 9.3.0");
+    CHECK(j["latest_tag"] == "v9.3.0");
+    CHECK(j["current"] == VERSION);
     CHECK(net.downloads == 0);
 }
 
@@ -230,13 +230,13 @@ TEST_CASE("update installs a verified binary in place; bad checksum changes noth
     update_hooks().self_path = self;
 
     // declined confirmation -> nothing happens
-    net.publish("v0.3.0", all_assets());
+    net.publish("v9.3.0", all_assets());
     auto r = run({"update", "--config", cfg});
     CHECK(r.rc == 1);
     CHECK(th::has(r.out, "Cancelled"));
     CHECK(read_file(self) == "OLD");
 
-    net.publish("v0.3.0", all_assets(), /*corrupt_sums=*/true);
+    net.publish("v9.3.0", all_assets(), /*corrupt_sums=*/true);
     r = run({"update", "--yes", "--config", cfg});
     CHECK(r.rc == 3);
     CHECK(th::has(r.err, "checksum mismatch"));
@@ -244,7 +244,7 @@ TEST_CASE("update installs a verified binary in place; bad checksum changes noth
     for (auto& e : std::filesystem::directory_iterator(tmp.path))   // no temp files left behind
         CHECK_MESSAGE(!th::has(e.path().filename().string(), ".new"), e.path().string());
 
-    net.publish("v0.3.0", all_assets());
+    net.publish("v9.3.0", all_assets());
     r = run({"update", "-y", "--config", cfg, "--json"});
     CHECK(r.rc == 0);
     json j = json::parse(r.out);
@@ -264,7 +264,7 @@ TEST_CASE("update installs a verified binary in place; bad checksum changes noth
         CHECK(n == 1);                                           // atomic rename, no leftovers
     }
     // --json install needs --yes
-    net.publish("v0.4.0", all_assets());
+    net.publish("v9.4.0", all_assets());
     CHECK(run({"update", "--json", "--config", cfg}).rc == 2);
 }
 
@@ -274,7 +274,7 @@ TEST_CASE("auto_install installs quietly only when both keys are true") {
     std::string self = tmp.file(current_os() == OS::Windows ? "hdmon.exe" : "hdmon");
     write_file(self, "OLD");
     update_hooks().self_path = self;
-    net.publish("v0.3.0", all_assets());
+    net.publish("v9.3.0", all_assets());
     std::string cfg = tmp.file("c.toml");
     write_file(cfg, "[update]\nauto_check = true\nauto_install = true\n");
     auto r = run({"check", "--from-json", th::fix(), "--no-record", "--no-alert", "--config", cfg, "--db", tmp.file("h.db"), "--json"});

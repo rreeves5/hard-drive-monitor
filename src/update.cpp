@@ -66,7 +66,12 @@ std::string current_arch() {
 #endif
 }
 
-std::vector<std::string> asset_names(OS os, const std::string& arch) {
+std::vector<std::string> asset_names(OS os, const std::string& arch, UpdateFlavor flavor) {
+    if (flavor == UpdateFlavor::Gui) {
+        if (os == OS::Windows && (arch == "x86_64" || arch == "arm64")) return {"hdmon-gui-windows-x86_64.exe"};
+        if (os == OS::Linux && arch == "x86_64") return {"hdmon-gui-linux-x86_64"};
+        return {};
+    }
     switch (os) {
         case OS::Windows:   // x64 build; Windows on ARM runs it under emulation
             if (arch == "x86_64" || arch == "arm64") return {"hdmon-windows-x86_64.exe", "hdmonw-windows-x86_64.exe"};
@@ -295,10 +300,14 @@ std::string with_suffix_before_ext(const fs::path& p, const std::string& suffix)
 }
 }  // namespace
 
-InstallResult install_update(const ReleaseInfo& rel) {
+InstallResult install_update(const ReleaseInfo& rel, UpdateFlavor flavor) {
     InstallResult res;
     UpdateHooks& H = update_hooks();
-    auto names = asset_names(current_os(), current_arch());
+    auto names = asset_names(current_os(), current_arch(), flavor);
+    if (names.empty() && flavor == UpdateFlavor::Gui && current_os() == OS::MacOS) {
+        res.message = "the macOS app is not replaced automatically; download Hard-Drive-Monitor-macos.zip from " + rel.url;
+        return res;
+    }
     if (names.empty()) {
         res.message = "no prebuilt binary for " + os_name(current_os()) + "/" + current_arch() +
                       "; build from source (see README) instead";
@@ -323,7 +332,7 @@ InstallResult install_update(const ReleaseInfo& rel) {
     remove_quiet(sums_tmp);
     // (asset, target) pairs. Windows also refreshes the window-less twin hdmonw.exe next to hdmon.exe.
     std::vector<std::pair<std::string, fs::path>> plan;
-    if (current_os() == OS::Windows) {
+    if (current_os() == OS::Windows && flavor == UpdateFlavor::Cli) {
         std::string base = lower(self.filename().string());
         bool gui = starts_with(base, "hdmonw");
         std::string orig = self.filename().string();
@@ -419,15 +428,16 @@ void cleanup_old_binaries() {
 }
 
 // ------------------------------------------------------------------ scheduled check
-std::string update_state_path(const std::string& db_path) {
+std::string update_state_path(const std::string& db_path, UpdateFlavor flavor) {
     std::string d = dirname(db_path.empty() ? default_db() : db_path);
-    return path_join(d.empty() ? "." : d, "update-state.json");
+    return path_join(d.empty() ? "." : d, flavor == UpdateFlavor::Gui ? "update-state-gui.json" : "update-state.json");
 }
 
-json scheduled_update_check(const json& cfg, const std::string& db_path, bool allow_notify, int64_t now_epoch) {
+json scheduled_update_check(const json& cfg, const std::string& db_path, bool allow_notify, int64_t now_epoch,
+                            UpdateFlavor flavor) {
     const json& up = jget(cfg, "update");
     if (!truthy(jget(up, "auto_check"))) return json();      // default: never touches the network
-    std::string sp = update_state_path(db_path);
+    std::string sp = update_state_path(db_path, flavor);
     json state = json::object();
     if (file_exists(sp)) {
         state = json::parse(read_file(sp), nullptr, false);
@@ -450,7 +460,7 @@ json scheduled_update_check(const json& cfg, const std::string& db_path, bool al
     if (c.ok && c.update_available) {
         UpdateHooks& H = update_hooks();
         if (truthy(jget(up, "auto_install"))) {
-            InstallResult ir = install_update(rel);
+            InstallResult ir = install_update(rel, flavor);
             out["installed"] = ir.ok;
             out["install_message"] = ir.message;
             if (allow_notify && H.notify)
@@ -459,7 +469,9 @@ json scheduled_update_check(const json& cfg, const std::string& db_path, bool al
         } else if (jstr(state, "notified_tag").value_or("") != c.latest_tag) {
             if (allow_notify && H.notify) {
                 auto [ok, info] = H.notify("Hard Drive Monitor update available",
-                                           c.latest + " is out (you have " + std::string(VERSION) + "). Run: hdmon update");
+                                           c.latest + " is out (you have " + std::string(VERSION) + "). " +
+                                               (flavor == UpdateFlavor::Gui ? "Open Options > Check now to install it."
+                                                                            : "Run: hdmon update"));
                 out["notified"] = ok;
                 if (ok) state["notified_tag"] = c.latest_tag;
             }

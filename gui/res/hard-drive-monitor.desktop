@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Hard Drive Monitor
+GenericName=Drive health monitor
+Comment=SMART drive health in the system tray
+Exec=hdmon-gui --show
+Icon=hard-drive-monitor
+Terminal=false
+Categories=System;Monitor;

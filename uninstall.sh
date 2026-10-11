@@ -46,6 +46,16 @@ done
 if [ -n "$SUDOERS_FILE" ] && [ -f "$SUDOERS_FILE" ]; then
   say "Removing sudoers rule $SUDOERS_FILE (sudo)"; sudo rm -f "$SUDOERS_FILE"
 fi
+# desktop app (hdmon-gui), its menu entry/icon and its "Start at login" entry
+GUI_BIN="$(sed -n 's/^gui=//p' "$DATA/install-state" 2>/dev/null)"
+for f in "$GUI_BIN" "$(sed -n 's/^gui_desktop=//p' "$DATA/install-state" 2>/dev/null)" \
+         "$(sed -n 's/^gui_icon=//p' "$DATA/install-state" 2>/dev/null)" \
+         "${XDG_CONFIG_HOME:-$HOME/.config}/autostart/hard-drive-monitor.desktop" \
+         "$HOME/Library/LaunchAgents/com.rreeves5.hard-drive-monitor.gui.plist"; do
+  if [ -n "$f" ] && [ -f "$f" ]; then say "Removing $f"; rm -f "$f"; fi
+done
+GUI_APP="$(sed -n 's/^gui_app=//p' "$DATA/install-state" 2>/dev/null)"
+if [ -n "$GUI_APP" ] && [ -d "$GUI_APP" ]; then say "Removing $GUI_APP"; rm -rf "$GUI_APP"; fi
 rm -f "$DATA/install-state"
 
 if [ "$PURGE" = 1 ]; then

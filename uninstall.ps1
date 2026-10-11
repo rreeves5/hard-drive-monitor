@@ -21,7 +21,14 @@ if ($LASTEXITCODE -eq 0) { Say 'Removing scheduled task hard-drive-monitor'; & s
 
 # binaries
 $binDir = if ($state -and $state.bin_dir) { $state.bin_dir } else { Join-Path $StateDir 'bin' }
-foreach ($f in 'hdmon.exe', 'hdmonw.exe', 'hdmon.exe.old', 'hdmonw.exe.old') {
+# desktop app: Start Menu shortcut and "Start at login" (logon task or HKCU Run value)
+if ($state -and $state.gui_shortcut -and (Test-Path $state.gui_shortcut)) { Remove-Item $state.gui_shortcut -Force; Say "Removed $($state.gui_shortcut)" }
+& schtasks /Query /TN 'Hard Drive Monitor GUI' *> $null
+if ($LASTEXITCODE -eq 0) { Say 'Removing logon task Hard Drive Monitor GUI'; & schtasks /Delete /TN 'Hard Drive Monitor GUI' /F | Out-Null }
+Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'Hard Drive Monitor GUI' -ErrorAction SilentlyContinue
+Get-Process hdmon-gui -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+
+foreach ($f in 'hdmon.exe', 'hdmonw.exe', 'hdmon.exe.old', 'hdmonw.exe.old', 'hdmon-gui.exe', 'hdmon.old.exe', 'hdmonw.old.exe', 'hdmon-gui.old.exe') {
     $p = Join-Path $binDir $f
     if (Test-Path $p) {
         Remove-Item $p -Force -ErrorAction SilentlyContinue

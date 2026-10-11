@@ -11,6 +11,9 @@
   Install to %ProgramFiles%\hard-drive-monitor\bin and add it to the MACHINE Path (all users)
   instead of %LOCALAPPDATA%\hard-drive-monitor\bin + the user Path. Needs an elevated PowerShell.
 
+.PARAMETER NoGui
+  Do not install the desktop app (hdmon-gui.exe + Start Menu shortcut), even if it is present.
+
 .PARAMETER EnableAutoUpdate
   Let the scheduled check look for a new release once a day and show a notification (it never installs
   unless auto_install = true is set in config.toml). Off by default; same as `hdmon update --enable-auto-check`.
@@ -26,7 +29,7 @@
   powershell -ExecutionPolicy Bypass -File .\install.ps1 -NoService
 #>
 [CmdletBinding()]
-param([switch]$System, [switch]$NoService, [string]$Binary = '', [switch]$EnableAutoUpdate)
+param([switch]$System, [switch]$NoService, [string]$Binary = '', [switch]$EnableAutoUpdate, [switch]$NoGui)
 
 # Native tools (cmake, schtasks) may write warnings to stderr; with 'Stop' Windows PowerShell 5.1 would turn those
 # into terminating errors. Failures are checked explicitly via $LASTEXITCODE instead.
@@ -178,6 +181,40 @@ if ($NoService) {
         }
     } else {
         Write-Warning 'Could not create the scheduled task (see the message above).'
+    }
+}
+
+# --- desktop app (optional): hdmon-gui.exe + Start Menu shortcut; -NoGui skips it
+if ($NoGui) {
+    Say 'Skipped the desktop app (-NoGui).'
+} else {
+    $GuiSrc = @((Join-Path $Src 'hdmon-gui.exe'), (Join-Path $Src 'dist\hdmon-gui-windows-x86_64.exe'),
+                (Join-Path $Src 'build\Release\hdmon-gui.exe'), (Join-Path $Src 'build\hdmon-gui.exe')) |
+              Where-Object { Test-Path $_ } | Select-Object -First 1
+    if ($GuiSrc) {
+        $GuiExe = Join-Path $BinDir 'hdmon-gui.exe'
+        Install-File $GuiSrc $GuiExe
+        $Programs = if ($System) { [Environment]::GetFolderPath('CommonPrograms') } else { [Environment]::GetFolderPath('Programs') }
+        $Lnk = Join-Path $Programs 'Hard Drive Monitor.lnk'
+        try {
+            $sh = New-Object -ComObject WScript.Shell
+            $sc = $sh.CreateShortcut($Lnk)
+            $sc.TargetPath = $GuiExe
+            $sc.Arguments = '--show'
+            $sc.WorkingDirectory = $BinDir
+            $sc.IconLocation = "$GuiExe,0"
+            $sc.Description = 'Hard Drive Monitor - SMART drive health'
+            $sc.Save()
+            Say "Installed the desktop app: $GuiExe (Start Menu: Hard Drive Monitor)"
+        } catch {
+            Write-Warning "Installed $GuiExe but could not create the Start Menu shortcut: $_"
+            $Lnk = $null
+        }
+        $state | Add-Member -NotePropertyName gui_exe -NotePropertyValue $GuiExe -Force
+        $state | Add-Member -NotePropertyName gui_shortcut -NotePropertyValue $Lnk -Force
+        $state | ConvertTo-Json | Set-Content -Path $StateFile -Encoding UTF8
+    } else {
+        Say 'No desktop app build found (hdmon-gui.exe); skipped.'
     }
 }
 

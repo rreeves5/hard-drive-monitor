@@ -9,6 +9,7 @@
 #   ./install.sh --no-sudoers   never ask about the sudoers rule
 #   ./install.sh --binary FILE  install this hdmon binary
 #   ./install.sh --build        always build from source with CMake
+#   ./install.sh --no-gui       skip the desktop app (hdmon-gui / Hard Drive Monitor.app) even if present
 #   ./install.sh --enable-auto-update  let the scheduled check look for new releases once a day
 #                               (notify only). Off by default; same as: hdmon update --enable-auto-check
 #
@@ -29,6 +30,7 @@ SUDOERS=ask
 BINARY=""
 FORCE_BUILD=0
 AUTO_UPDATE=0
+GUI=1
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -40,7 +42,8 @@ while [ $# -gt 0 ]; do
     --binary=*) BINARY="${1#--binary=}" ;;
     --build) FORCE_BUILD=1 ;;
     --enable-auto-update) AUTO_UPDATE=1 ;;
-    -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
+    --no-gui) GUI=0 ;;
+    -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
   shift
@@ -188,6 +191,44 @@ if [ "$SERVICE" = 1 ]; then
 else
   say "Skipped scheduling (--no-service). Turn it on later with: hdmon install-service"
 fi
+
+# --- desktop app (optional): installed when a build is present; --no-gui skips it
+install_gui() {
+  if [ "$OS" = macos ]; then
+    local app=""
+    for c in "$SRC/Hard Drive Monitor.app" "$SRC/dist/Hard Drive Monitor.app" "$SRC/build-gui/Hard Drive Monitor.app"; do
+      [ -d "$c" ] && { app="$c"; break; }
+    done
+    if [ -z "$app" ] && [ -f "$SRC/dist/Hard-Drive-Monitor-macos.zip" ]; then
+      local tmpd; tmpd="$(mktemp -d)"
+      ditto -x -k "$SRC/dist/Hard-Drive-Monitor-macos.zip" "$tmpd" && app="$tmpd/Hard Drive Monitor.app"
+    fi
+    [ -n "$app" ] && [ -d "$app" ] || { say "No desktop app build found (Hard Drive Monitor.app); skipped."; return 0; }
+    mkdir -p "$HOME/Applications"
+    rm -rf "$HOME/Applications/Hard Drive Monitor.app"
+    ditto "$app" "$HOME/Applications/Hard Drive Monitor.app"
+    echo "gui_app=$HOME/Applications/Hard Drive Monitor.app" >> "$STATE_DIR/install-state"
+    say "Installed the desktop app: ~/Applications/Hard Drive Monitor.app"
+    return 0
+  fi
+  local g=""
+  for c in "$SRC/hdmon-gui" "$SRC/dist/hdmon-gui-$OS-$ARCH" "$SRC/build-gui/hdmon-gui"; do
+    if [ -f "$c" ] && "$c" --version >/dev/null 2>&1; then g="$c"; break; fi
+  done
+  [ -n "$g" ] || { say "No runnable desktop app build found (hdmon-gui needs GTK 3); skipped."; return 0; }
+  local tmpg="$BIN/.hdmon-gui.new.$$"
+  cp "$g" "$tmpg" && chmod 755 "$tmpg" && mv -f "$tmpg" "$BIN/hdmon-gui"
+  local apps="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+  local icons="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/256x256/apps"
+  mkdir -p "$apps" "$icons"
+  [ -f "$SRC/gui/res/hard-drive-monitor.png" ] && cp "$SRC/gui/res/hard-drive-monitor.png" "$icons/hard-drive-monitor.png"
+  sed "s|^Exec=.*|Exec=\"$BIN/hdmon-gui\" --show|" "$SRC/gui/res/hard-drive-monitor.desktop" > "$apps/hard-drive-monitor.desktop" 2>/dev/null ||
+    printf '[Desktop Entry]\nType=Application\nName=Hard Drive Monitor\nExec="%s" --show\nIcon=hard-drive-monitor\nTerminal=false\nCategories=System;Monitor;\n' "$BIN/hdmon-gui" > "$apps/hard-drive-monitor.desktop"
+  command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$apps" >/dev/null 2>&1 || true
+  { echo "gui=$BIN/hdmon-gui"; echo "gui_desktop=$apps/hard-drive-monitor.desktop"; echo "gui_icon=$icons/hard-drive-monitor.png"; } >> "$STATE_DIR/install-state"
+  say "Installed the desktop app: $BIN/hdmon-gui (menu entry: Hard Drive Monitor)"
+}
+if [ "$GUI" = 1 ]; then install_gui; else say "Skipped the desktop app (--no-gui)."; fi
 
 # --- automatic update checks: OFF unless --enable-auto-update was given (never turned on silently)
 if [ "$AUTO_UPDATE" = 1 ]; then

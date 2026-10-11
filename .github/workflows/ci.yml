@@ -107,10 +107,66 @@ jobs:
           path: release/*
           if-no-files-found: error
 
+  gui:
+    name: hdmon-gui (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-latest
+            cmake_args: ""
+          - name: macos-universal
+            os: macos-latest
+            cmake_args: '"-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=10.15'
+          - name: windows-x86_64
+            os: windows-latest
+            cmake_args: -A x64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Linux - GTK 3 headers
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev
+
+      - name: Configure (wxWidgets fetched and linked statically)
+        shell: bash
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DHDMON_BUILD_GUI=ON -DHDMON_WX_FETCH=ON -DHDMON_BUILD_TESTS=OFF ${{ matrix.cmake_args }}
+
+      - name: Build hdmon-gui
+        run: cmake --build build --config Release --parallel --target hdmon-gui
+
+      - name: Stage + smoke test
+        shell: bash
+        run: |
+          mkdir -p release
+          case "${{ runner.os }}" in
+            Linux)
+              build/hdmon-gui --version
+              file build/hdmon-gui
+              cp build/hdmon-gui release/hdmon-gui-linux-x86_64 ;;
+            macOS)
+              app="build/Hard Drive Monitor.app"
+              "$app/Contents/MacOS/Hard Drive Monitor" --version
+              lipo -info "$app/Contents/MacOS/Hard Drive Monitor"
+              ditto -c -k --keepParent "$app" release/Hard-Drive-Monitor-macos.zip ;;
+            Windows)
+              ls -la build/Release/hdmon-gui.exe
+              cp build/Release/hdmon-gui.exe release/hdmon-gui-windows-x86_64.exe ;;
+          esac
+          ls -la release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gui-${{ matrix.name }}
+          path: release/*
+          if-no-files-found: error
+
   release:
     name: GitHub release (tags v*)
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build-test
+    needs: [build-test, gui]
     runs-on: ubuntu-latest
     permissions:
       contents: write
