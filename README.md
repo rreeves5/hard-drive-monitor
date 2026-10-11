@@ -10,6 +10,21 @@ It is a **single native executable** per OS (C++17, no Python or other runtime n
 `hdmon` on Linux, `hdmon.exe` (+ `hdmonw.exe`, the same program without a console window for the scheduled
 task) on Windows, and a universal (arm64 + x86_64) `hdmon` on macOS.
 
+## Download
+
+Grab the ready-to-run executable for your system from the
+[latest release](https://github.com/rreeves5/hard-drive-monitor/releases/latest):
+
+| OS | File |
+|---|---|
+| Windows (64-bit) | [`hdmon-windows-x86_64.exe`](https://github.com/rreeves5/hard-drive-monitor/releases/latest/download/hdmon-windows-x86_64.exe) (plus [`hdmonw-windows-x86_64.exe`](https://github.com/rreeves5/hard-drive-monitor/releases/latest/download/hdmonw-windows-x86_64.exe), the no-window version for scheduled checks) |
+| macOS (Apple Silicon + Intel) | [`hdmon-macos-universal`](https://github.com/rreeves5/hard-drive-monitor/releases/latest/download/hdmon-macos-universal) |
+| Linux (x86_64, static) | [`hdmon-linux-x86_64`](https://github.com/rreeves5/hard-drive-monitor/releases/latest/download/hdmon-linux-x86_64) |
+
+`SHA256SUMS.txt` in the release lists checksums. You still need smartmontools installed
+(`winget install smartmontools.smartmontools`, `brew install smartmontools`, or `sudo apt install smartmontools`).
+To put `hdmon` on your PATH and turn on the background check, use the installer below.
+
 ## Quick install
 
 Run from a clone or the unzipped folder. Each installer copies the prebuilt `hdmon` binary from `dist/`
