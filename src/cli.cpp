@@ -1,6 +1,7 @@
 #include "cli.hpp"
 
 #include <chrono>
+#include <ctime>
 #include <map>
 #include <set>
 #include <sstream>
@@ -11,6 +12,7 @@
 #include "config.hpp"
 #include "render.hpp"
 #include "service.hpp"
+#include "update.hpp"
 
 namespace hdmon {
 
@@ -69,11 +71,17 @@ std::map<std::string, CmdSpec> specs() {
                               "  --system       print the commands to remove the root/system-wide job\n"};
     s["init-config"] = {"write a sample config.toml", {"--json", "--force"}, COMMON_V, {}, "  --force        overwrite\n"};
     s["alert-test"] = {"send a test desktop notification (and e-mail if enabled)", {"--json"}, COMMON_V, {}, ""};
+    s["update"] = {"check GitHub for a newer release and install it (only when you ask)",
+                   {"--json", "--check", "--yes", "--enable-auto-check", "--disable-auto-check"}, COMMON_V, {},
+                   "  --check        only report whether a newer release exists (exit 0 = up to date, 1 = update available)\n"
+                   "  -y, --yes      install without asking for confirmation\n"
+                   "  --enable-auto-check   set [update] auto_check = true: the scheduled check looks once a day and notifies\n"
+                   "  --disable-auto-check  set [update] auto_check = false and auto_install = false (the default)\n"};
     return s;
 }
 
 const char* ORDER[] = {"status", "detail", "history", "check", "watch", "selftest", "install-service",
-                       "uninstall-service", "init-config", "alert-test"};
+                       "uninstall-service", "init-config", "alert-test", "update"};
 
 std::string main_usage() {
     std::ostringstream o;
@@ -122,6 +130,7 @@ Args parse(const std::vector<std::string>& argv) {
         std::string t = argv[i];
         if (t == "-h" || t == "--help") throw HelpRequested{cmd_usage(a.cmd, sp)};
         if (t == "-d") t = "--type";
+        if (t == "-y") t = "--yes";
         std::string val;
         bool has_val = false;
         if (starts_with(t, "--") && t.find('=') != std::string::npos) {
@@ -263,6 +272,9 @@ int cmd_check(Ctx& c) {
     auto results = gather(c, meta, ch);
     auto alerts = build_alerts(results, ch);
     std::vector<std::string> sent = c.a.has("--no-alert") ? std::vector<std::string>{} : dispatch(c.cfg, alerts);
+    // Opt-in only ([update] auto_check, default false): at most one release check per day; notify, never auto-run.
+    json upd = scheduled_update_check(c.cfg, c.a.get("--db", default_db()), !c.a.has("--no-alert"),
+                                      static_cast<int64_t>(std::time(nullptr)));
     std::string worst = "OK";
     bool first = true;
     for (auto& r : results) {   // max() by rank; first wins on ties, like Python
@@ -276,14 +288,24 @@ int cmd_check(Ctx& c) {
         j["alerts"] = al;
         j["alert_log"] = sent;
         j["worst"] = worst;
+        if (!upd.is_null()) j["update"] = upd;
         c.out << (c.jsonl ? j.dump(-1, ' ', true, json::error_handler_t::replace) : dump(j)) << "\n";
     } else if (!c.a.has("--quiet")) {
         c.out << "[" << local_now_hms() << "] " << results.size() << " drive(s), worst status " << worst << ", "
               << alerts.size() << " new alert(s)\n";
         for (auto& al : alerts) c.out << "  ALERT " << al.title << "\n    " << replace_all(al.body, "\n", "\n    ") << "\n";
         for (auto& line : sent) c.out << "  " << line << "\n";
+        if (truthy(jget(upd, "checked"))) {
+            if (!truthy(jget(upd, "ok"))) c.out << "  update check failed: " << to_str(jget(upd, "error")) << "\n";
+            else if (upd.contains("installed")) c.out << "  UPDATE " << to_str(jget(upd, "install_message")) << "\n";
+            else if (truthy(jget(upd, "update_available")))
+                c.out << "  UPDATE " << to_str(jget(upd, "latest")) << " is available: " << to_str(jget(upd, "url"))
+                      << " (install with: hdmon update)\n";
+        }
     } else {
         for (auto& al : alerts) c.out << "ALERT " << al.title << ": " << replace_all(al.body, "\n", " | ") << "\n";
+        if (truthy(jget(upd, "update_available")))
+            c.out << "UPDATE " << to_str(jget(upd, "latest")) << " is available (hdmon update)\n";
     }
     c.out.flush();
     return EXIT_CODE.at(worst);
@@ -436,6 +458,62 @@ int cmd_alert_test(Ctx& c) {
     return 0;
 }
 
+int cmd_update(Ctx& c) {
+    bool js = c.a.has("--json");
+    if (c.a.has("--enable-auto-check") || c.a.has("--disable-auto-check")) {
+        if (c.a.has("--enable-auto-check") && c.a.has("--disable-auto-check"))
+            throw UsageError("--enable-auto-check and --disable-auto-check are mutually exclusive");
+        bool on = c.a.has("--enable-auto-check");
+        std::string path = c.a.get("--config", config_path()), e;
+        bool ok = set_config_value(path, "update", "auto_check", on ? "true" : "false", &e);
+        if (ok && !on) ok = set_config_value(path, "update", "auto_install", "false", &e);
+        if (js) c.out << dump({{"ok", ok}, {"config", path}, {"auto_check", on}, {"error", ok ? json() : json(e)}}) << "\n";
+        else if (ok) c.out << (on ? "Automatic update checks ON (once a day, notify only; nothing is installed unless "
+                                    "auto_install = true): "
+                                  : "Automatic update checks and installs OFF: ") << path << "\n";
+        else c.err << "hdmon: " << e << "\n";
+        return ok ? 0 : 3;
+    }
+    ReleaseInfo rel;
+    CheckResult r = check_for_update(VERSION, &rel);
+    if (!r.ok) {
+        if (js) c.out << dump(r.to_json()) << "\n";
+        else c.err << "hdmon: update check failed: " << r.error << "\n";
+        return 3;
+    }
+    std::string ahead = compare_versions(VERSION, r.latest_tag) > 0 ? "newer than the latest release, " : "latest release: ";
+    if (c.a.has("--check")) {
+        if (js) c.out << dump(r.to_json()) << "\n";
+        else if (r.update_available)
+            c.out << "Update available: " << r.latest << " (you have " << VERSION << ")\n  " << r.url
+                  << "\nInstall it with: hdmon update\n";
+        else c.out << "Up to date: " << VERSION << " (" << ahead << r.latest << ")\n";
+        return r.update_available ? 1 : 0;
+    }
+    if (!r.update_available) {
+        if (js) c.out << dump({{"check", r.to_json()}, {"installed", false}, {"message", "up to date"}}) << "\n";
+        else c.out << "Up to date: " << VERSION << " (" << ahead << r.latest << ")\n";
+        return 0;
+    }
+    if (!c.a.has("--yes")) {
+        if (js) throw UsageError("installing with --json needs --yes (no interactive prompt in JSON mode)");
+        c.out << "Update available: " << r.latest << " (you have " << VERSION << ")\n  " << r.url << "\n" << std::flush;
+        auto& H = update_hooks();
+        if (!H.confirm || !H.confirm("Download, verify and install " + r.latest + " now?")) {
+            c.out << "Cancelled. Nothing was changed.\n";
+            return 1;
+        }
+    }
+    InstallResult ir = install_update(rel);
+    if (js) {
+        c.out << dump({{"check", r.to_json()}, {"installed", ir.ok}, {"message", ir.message}, {"log", ir.log}}) << "\n";
+    } else {
+        for (auto& l : ir.log) c.out << "  " << l << "\n";
+        (ir.ok ? c.out : c.err) << (ir.ok ? "" : "hdmon: update failed: ") << ir.message << "\n";
+    }
+    return ir.ok ? 0 : 3;
+}
+
 }  // namespace
 
 int run_cli(const std::vector<std::string>& argv, std::ostream& out, std::ostream& err) {
@@ -449,6 +527,7 @@ int run_cli(const std::vector<std::string>& argv, std::ostream& out, std::ostrea
         err << "usage: hdmon [-h] [--version] COMMAND ...\nhdmon: error: " << e.what() << "\n";
         return 2;
     }
+    cleanup_old_binaries();   // Windows: hdmon.old.exe left behind by a previous `hdmon update`
     json cfg;
     try {
         cfg = load_config(a.get("--config"));
@@ -469,6 +548,7 @@ int run_cli(const std::vector<std::string>& argv, std::ostream& out, std::ostrea
         if (k == "uninstall-service") return cmd_uninstall(c);
         if (k == "init-config") return cmd_init_config(c);
         if (k == "alert-test") return cmd_alert_test(c);
+        if (k == "update") return cmd_update(c);
         return 2;
     } catch (const SmartctlMissing& e) {
         if (a.has("--json")) out << dump({{"error", e.what()}, {"install", install_hint()}}) << "\n";

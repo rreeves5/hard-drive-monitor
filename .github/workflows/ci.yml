@@ -57,6 +57,7 @@ jobs:
           set -e
           test "$rc" = 2   # worst fixture is CRITICAL
           ${{ matrix.binary }} install-service --dry-run --json
+          ${{ matrix.binary }} update --help
 
       - name: Linux - check the binary is static
         if: runner.os == 'Linux'

@@ -9,6 +9,8 @@
 #   ./install.sh --no-sudoers   never ask about the sudoers rule
 #   ./install.sh --binary FILE  install this hdmon binary
 #   ./install.sh --build        always build from source with CMake
+#   ./install.sh --enable-auto-update  let the scheduled check look for new releases once a day
+#                               (notify only). Off by default; same as: hdmon update --enable-auto-check
 #
 # Uses a prebuilt binary when one matches this machine (in order: --binary FILE, ./hdmon next to
 # this script, dist/hdmon-<os>-<arch>, build/hdmon); otherwise builds from source with CMake
@@ -26,6 +28,7 @@ SERVICE=1
 SUDOERS=ask
 BINARY=""
 FORCE_BUILD=0
+AUTO_UPDATE=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -36,6 +39,7 @@ while [ $# -gt 0 ]; do
     --binary) shift; BINARY="${1:-}" ;;
     --binary=*) BINARY="${1#--binary=}" ;;
     --build) FORCE_BUILD=1 ;;
+    --enable-auto-update) AUTO_UPDATE=1 ;;
     -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
@@ -183,6 +187,13 @@ if [ "$SERVICE" = 1 ]; then
   fi
 else
   say "Skipped scheduling (--no-service). Turn it on later with: hdmon install-service"
+fi
+
+# --- automatic update checks: OFF unless --enable-auto-update was given (never turned on silently)
+if [ "$AUTO_UPDATE" = 1 ]; then
+  "$BIN/hdmon" update --enable-auto-check || say "Could not enable automatic update checks."
+else
+  say "Automatic update checks are off (default). Check by hand with: hdmon update --check"
 fi
 
 cat <<MSG

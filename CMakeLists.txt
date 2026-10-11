@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(hard_drive_monitor VERSION 0.2.1 LANGUAGES C CXX)
+project(hard_drive_monitor VERSION 0.2.2 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -25,7 +25,7 @@ endif()
 # ---- core library
 add_library(hdmon_core STATIC
   src/util.cpp src/config.cpp src/smart.cpp src/health.cpp src/history.cpp
-  src/alerts.cpp src/service.cpp src/render.cpp src/collect.cpp src/cli.cpp)
+  src/alerts.cpp src/service.cpp src/render.cpp src/collect.cpp src/cli.cpp src/update.cpp)
 target_include_directories(hdmon_core PUBLIC src third_party)
 target_link_libraries(hdmon_core PUBLIC hdmon_sqlite)
 target_compile_definitions(hdmon_core PRIVATE HDMON_VERSION="Beta V ${PROJECT_VERSION}")

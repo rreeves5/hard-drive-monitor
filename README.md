@@ -77,6 +77,7 @@ smartmontools`, `brew install smartmontools`, or `winget install smartmontools.s
 | `hdmon install-service` / `uninstall-service` | Hourly schedule: systemd user timer / launchd agent / Task Scheduler. |
 | `hdmon init-config` | Writes a commented sample config. |
 | `hdmon alert-test` | Sends a test notification (and e-mail, if enabled). |
+| `hdmon update [--check]` | Looks for a newer GitHub release; installs it (checksum-verified) only when you run it. See [Updates](#updates). |
 
 - `--from-json FILE_OR_DIR` (status, detail, check, watch, selftest --results): read saved
   `smartctl -x --json` output instead of live drives. Useful for demos, for checking a drive from another
@@ -108,6 +109,7 @@ Prebuilt binaries (also attached to GitHub releases by CI for `v*` tags):
    It is validated with `visudo` before it is installed, and never written without `visudo`.
 5. Runs `hdmon install-service` to schedule the background check (skip with `--no-service`).
 6. `--system` also symlinks `hdmon` into `/usr/local/bin` (uses sudo).
+7. Leaves automatic update checks **off**. `--enable-auto-update` turns on the daily check (notify only).
 
 `install.ps1` (Windows):
 
@@ -120,6 +122,7 @@ Prebuilt binaries (also attached to GitHub releases by CI for `v*` tags):
    windows see it. `hdmon` then works in cmd.exe and PowerShell alike (no shim needed any more).
 4. Runs `hdmon install-service`: a Task Scheduler task at logon + hourly. When the script runs **elevated**
    the task gets **highest privileges**, so smartctl can read the drives (skip with `-NoService`).
+5. Leaves automatic update checks **off**. `-EnableAutoUpdate` turns on the daily check (notify only).
 
 After installing, **open a new terminal / Command Prompt / PowerShell** and run `hdmon status`.
 
@@ -285,6 +288,10 @@ hdd_temp_crit = 55
 
 [ignore]
 devices = ["/dev/sdz"]
+
+[update]                 # both OFF by default - see "Updates"
+auto_check = false
+auto_install = false
 ```
 
 The file is read by a small built-in parser that handles the simple TOML subset above (`[sections]`,
@@ -295,6 +302,55 @@ History database (SQLite):
 - Linux: `~/.local/share/hard-drive-monitor/history.db`
 - macOS: `~/Library/Application Support/hard-drive-monitor/history.db`
 - Windows: `%LOCALAPPDATA%\hard-drive-monitor\history.db`
+
+## Updates
+
+Updating is **opt-in**. Nothing checks for or installs updates unless you ask.
+
+```sh
+hdmon update --check          # "Up to date: ..." or "Update available: Beta V x.y.z" + release link
+hdmon update --check --json   # {"current", "latest", "latest_tag", "update_available", "url", ...}
+hdmon update                  # download, verify, then ask "[y/N]" before installing
+hdmon update --yes            # same, without the question (-y)
+```
+
+- It asks GitHub for the latest release of
+  [rreeves5/hard-drive-monitor](https://github.com/rreeves5/hard-drive-monitor/releases/latest)
+  (`https://api.github.com/repos/rreeves5/hard-drive-monitor/releases/latest`) with the **`curl`
+  command-line tool**, the same one used for e-mail. It ships with Windows 10+ and macOS; on Linux, `sudo apt install curl`.
+- Versions are compared by number (`v0.2.10` is newer than `v0.2.9`). `--check` exits 0 when you're up to date,
+  1 when an update is available and 3 on error.
+- `hdmon update` downloads the file for your system (`hdmon-linux-x86_64`, `hdmon-macos-universal`, or
+  `hdmon-windows-x86_64.exe` + `hdmonw-windows-x86_64.exe`) plus `SHA256SUMS.txt`. Each file's SHA-256 is
+  checked with a built-in implementation before anything is replaced. If a checksum is wrong or missing, the
+  installed binary stays as it was.
+- How the binary gets replaced:
+  - **Linux/macOS:** the new file goes into a temp file in the same folder, gets `chmod 755`, and is
+    atomically `rename`d over the old one, so a check that is running at that moment is unaffected. If the folder
+    isn't writable (e.g. a root-owned install), run `sudo hdmon update`.
+  - **Windows:** a running `.exe` can't be overwritten, but it can be renamed. `hdmon.exe` becomes
+    `hdmon.old.exe` and the new file is moved in. The same happens for `hdmonw.exe` next to it. The `.old.exe`
+    files are deleted the next time hdmon runs.
+- Linux on ARM has no prebuilt binary, so build from source there.
+
+### Automatic update checks (off by default)
+
+```toml
+[update]
+auto_check = false     # default
+auto_install = false   # default
+```
+
+- `auto_check = true`: the scheduled `hdmon check` (and `watch`) checks GitHub **at most once every 24 hours**
+  (the time is kept in `update-state.json` next to the history database). When a new release appears, you get
+  **one desktop notification per new version** (not with `--no-alert`) and a line in the output. **Nothing is
+  installed.**
+- `auto_install = true` (only together with `auto_check = true`): the scheduled check also downloads, verifies
+  and installs the new release quietly, then sends a notification about it.
+- With `auto_check = false` (the default), `check` never touches the network.
+- Toggle it with `hdmon update --enable-auto-check` / `hdmon update --disable-auto-check` (the second also sets
+  `auto_install = false`), or edit `config.toml`. The installers never turn this on unless you pass
+  `./install.sh --enable-auto-update` / `install.ps1 -EnableAutoUpdate`.
 
 ## How the scores work
 
@@ -386,7 +442,7 @@ python3 tools/render_demo.py               # regenerate demo-status.png from bui
 ```
 
 Layout: `src/` (one module per concern: `smart` discovery/parsing incl. the Windows fallback, `health` scoring,
-`history` SQLite, `alerts`, `service` scheduling, `render`, `cli`), `tests/` (doctest), `third_party/`.
+`history` SQLite, `alerts`, `service` scheduling, `update` opt-in self-update, `render`, `cli`), `tests/` (doctest), `third_party/`.
 Platform-specific code is behind `#ifdef _WIN32` / `__APPLE__`; commands that only exist on one OS
 (`diskutil`, `lsblk`, PowerShell, `schtasks`, `launchctl`, `systemctl`) are run as child processes.
 

@@ -72,3 +72,4 @@ if ($Purge) {
     Write-Host "Kept history ($StateDir) and config ($conf). Use -Purge to delete them."
 }
 Write-Host 'Open a new Command Prompt or PowerShell window for the PATH change to take effect.'
+exit 0   # do not leak a native tool's exit code (e.g. schtasks /Query for a missing task) to the caller

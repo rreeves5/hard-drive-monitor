@@ -11,6 +11,10 @@
   Install to %ProgramFiles%\hard-drive-monitor\bin and add it to the MACHINE Path (all users)
   instead of %LOCALAPPDATA%\hard-drive-monitor\bin + the user Path. Needs an elevated PowerShell.
 
+.PARAMETER EnableAutoUpdate
+  Let the scheduled check look for a new release once a day and show a notification (it never installs
+  unless auto_install = true is set in config.toml). Off by default; same as `hdmon update --enable-auto-check`.
+
 .PARAMETER Binary
   Path to a hdmon.exe to install. Default: hdmon.exe next to this script, then
   dist\hdmon-windows-x86_64.exe, then build\(Release\)hdmon.exe; if none exists the script builds
@@ -22,7 +26,7 @@
   powershell -ExecutionPolicy Bypass -File .\install.ps1 -NoService
 #>
 [CmdletBinding()]
-param([switch]$System, [switch]$NoService, [string]$Binary = '')
+param([switch]$System, [switch]$NoService, [string]$Binary = '', [switch]$EnableAutoUpdate)
 
 # Native tools (cmake, schtasks) may write warnings to stderr; with 'Stop' Windows PowerShell 5.1 would turn those
 # into terminating errors. Failures are checked explicitly via $LASTEXITCODE instead.
@@ -177,9 +181,18 @@ if ($NoService) {
     }
 }
 
+# --- automatic update checks: OFF unless -EnableAutoUpdate was given (never turned on silently)
+if ($EnableAutoUpdate) {
+    & $exe update --enable-auto-check
+    if ($LASTEXITCODE -ne 0) { Write-Warning 'Could not enable automatic update checks.' }
+} else {
+    Say 'Automatic update checks are off (default). Check by hand with: hdmon update --check'
+}
+
 Write-Host ''
 Write-Host 'Open a NEW Command Prompt or PowerShell window, then run:'
 Write-Host '  hdmon status'
 Write-Host 'Use an elevated (Run as Administrator) window so smartctl can read the drives.'
 Write-Host 'Turn the background check off with:  hdmon uninstall-service'
 Write-Host 'Remove everything with:              powershell -ExecutionPolicy Bypass -File .\uninstall.ps1'
+exit 0
