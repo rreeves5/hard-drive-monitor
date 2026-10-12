@@ -376,6 +376,8 @@ public:
         SetClientSize(FromDIP(wxSize(980, 300)));
         CentreOnScreen();
 
+        list_->Bind(wxEVT_SIZE, [this](wxSizeEvent& e) { e.Skip(); CallAfter([this] { FitColumns(); }); });
+        Bind(wxEVT_SHOW, [this](wxShowEvent& e) { e.Skip(); if (e.IsShown()) CallAfter([this] { FitColumns(); }); });
         scan_->Bind(wxEVT_BUTTON, &MainFrame::OnScan, this);
         opt->Bind(wxEVT_BUTTON, &MainFrame::OnOptions, this);
         abt->Bind(wxEVT_BUTTON, &MainFrame::OnAbout, this);
@@ -435,6 +437,31 @@ public:
         }
         if (keep >= 0 && keep < list_->GetItemCount()) list_->SetItemState(keep, wxLIST_STATE_SELECTED, wxLIST_STATE_SELECTED);
         list_->Thaw();
+        FitColumns();
+    }
+
+    // Columns always fill the list exactly: no horizontal scrollbar, no blank gap right of Health.
+    void FitColumns() {
+        int avail = list_->GetClientSize().GetWidth();     // client area: excludes a visible vertical scrollbar
+        if (avail <= 0) return;
+        const int pad = FromDIP(14);
+        wxFont bold = list_->GetFont();
+        bold.SetWeight(wxFONTWEIGHT_BOLD);
+        std::vector<int> mins(5, 0), hdr(5, 0);
+        for (int c = 0; c < 5; ++c) {
+            wxListItem it;
+            it.SetMask(wxLIST_MASK_TEXT);
+            list_->GetColumn(c, it);
+            hdr[c] = list_->GetTextExtent(it.GetText()).GetWidth() + pad;
+        }
+        wxClientDC dc(list_);
+        for (const auto& r : rows_) {
+            dc.SetFont(r.bold ? bold : list_->GetFont());
+            for (int c = 0; c < 5; ++c) mins[c] = std::max(mins[c], dc.GetTextExtent(U(r.cells[c])).GetWidth() + pad);
+        }
+        auto w = g::fit_column_widths(mins, hdr, avail, 1);                // Model takes the slack
+        for (int c = 0; c < 5; ++c)
+            if (list_->GetColumnWidth(c) != w[c]) list_->SetColumnWidth(c, w[c]);
     }
 
     void Toggle(long i) {

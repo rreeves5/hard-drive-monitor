@@ -316,3 +316,23 @@ TEST_CASE("source text and smartmontools credit") {
     CHECK(g::used_smartctl({n, s}, meta));
     CHECK(g::source_text({n}, {{"source", "json-files"}}) == "sample data (--from-json)");
 }
+
+TEST_CASE("fit_column_widths fills the list exactly, Model takes slack, never below header") {
+    using g::fit_column_widths;
+    auto sum = [](const std::vector<int>& v) { int t = 0; for (int x : v) t += x; return t; };
+    std::vector<int> mins{100, 200, 60, 50, 80}, hdr{40, 45, 35, 40, 50};
+    auto w = fit_column_widths(mins, hdr, 900, 1);            // wide: extra goes to Model only
+    CHECK(sum(w) == 900);
+    CHECK(w == std::vector<int>{100, 610, 60, 50, 80});
+    w = fit_column_widths(mins, hdr, 490, 1);                  // exact fit
+    CHECK(w == mins);
+    w = fit_column_widths(mins, hdr, 300, 1);                  // narrow: proportional shrink, clamped at header
+    CHECK(sum(w) == 300);
+    for (size_t i = 0; i < w.size(); ++i) CHECK(w[i] >= hdr[i]);
+    CHECK(w[1] > w[0]);
+    w = fit_column_widths(mins, hdr, 215, 1);                  // only headers fit
+    CHECK(sum(w) == 215);
+    CHECK(w == std::vector<int>{40, 50, 35, 40, 50});
+    CHECK(fit_column_widths(mins, hdr, 100, 1) == hdr);        // too narrow even for headers
+    CHECK(fit_column_widths({10, 300}, {80, 20}, 400, 1) == std::vector<int>{80, 320});   // header beats content
+}

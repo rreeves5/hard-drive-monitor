@@ -77,4 +77,10 @@ GuiSettings load_gui_settings(const json& cfg);
 // Writes the four keys back with set_config_value (keeps the rest of the file).
 bool save_gui_settings(const std::string& config_path, const GuiSettings& s, std::string* err);
 
+// Column widths that add up to exactly `avail` (the list's client width without the vertical scrollbar).
+// mins[i] = content-based minimum, header[i] = header text width (a column never goes below it). Extra space
+// goes to column `slack`; when space is short every column shrinks in proportion to its minimum, clamped at its
+// header width. If even the header widths do not fit, the header widths are returned.
+std::vector<int> fit_column_widths(const std::vector<int>& mins, const std::vector<int>& header, int avail, size_t slack);
+
 }  // namespace hdmon::gui

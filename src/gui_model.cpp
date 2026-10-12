@@ -292,4 +292,40 @@ bool save_gui_settings(const std::string& path, const GuiSettings& s, std::strin
            set_config_value(path, "update", "auto_check", b(s.auto_check), err);
 }
 
+std::vector<int> fit_column_widths(const std::vector<int>& mins, const std::vector<int>& header, int avail, size_t slack) {
+    const size_t n = mins.size();
+    std::vector<int> hdr(n, 0), want(n), w(n);
+    long sum_hdr = 0, sum_want = 0;
+    for (size_t i = 0; i < n; ++i) {
+        if (i < header.size()) hdr[i] = std::max(0, header[i]);
+        want[i] = std::max(mins[i], hdr[i]);
+        sum_hdr += hdr[i];
+        sum_want += want[i];
+    }
+    if (n == 0) return w;
+    if (slack >= n) slack = 0;
+    if (sum_hdr >= avail) return hdr;
+    if (sum_want <= avail) {
+        w = want;
+        w[slack] += avail - static_cast<int>(sum_want);
+        return w;
+    }
+    std::vector<bool> fixed(n, false);
+    for (;;) {
+        long room = avail, scalable = 0;
+        for (size_t i = 0; i < n; ++i) (fixed[i] ? room -= hdr[i] : scalable += want[i]);
+        bool changed = false;
+        for (size_t i = 0; i < n; ++i) {
+            if (fixed[i]) { w[i] = hdr[i]; continue; }
+            w[i] = scalable > 0 ? static_cast<int>(static_cast<long long>(want[i]) * room / scalable) : hdr[i];
+            if (w[i] < hdr[i]) { fixed[i] = true; changed = true; }
+        }
+        if (!changed) break;
+    }
+    long total = 0;
+    for (int x : w) total += x;
+    w[slack] += avail - static_cast<int>(total);     // rounding remainder (always >= 0)
+    return w;
+}
+
 }  // namespace hdmon::gui
