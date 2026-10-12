@@ -1,5 +1,6 @@
 #include "dbus.hpp"
 
+#include <cstddef>
 #include <cstring>
 
 #include "util.hpp"
@@ -7,6 +8,7 @@
 #if !defined(_WIN32)
 #include <poll.h>
 #include <sys/socket.h>
+#include <fcntl.h>
 #include <sys/un.h>
 #include <unistd.h>
 #include <cerrno>
@@ -203,7 +205,11 @@ Connection::~Connection() { if (fd_ >= 0) ::close(fd_); }
 static bool send_all(int fd, const void* p, size_t n) {
     const char* c = static_cast<const char*>(p);
     while (n) {
+#ifdef MSG_NOSIGNAL
         ssize_t k = ::send(fd, c, n, MSG_NOSIGNAL);
+#else
+        ssize_t k = ::send(fd, c, n, 0);
+#endif
         if (k < 0) { if (errno == EINTR) continue; return false; }
         c += k;
         n -= static_cast<size_t>(k);
@@ -228,8 +234,16 @@ bool Connection::open(const std::string& address, bool bus, std::string& err) {
     bool abs = false;
     std::string path = socket_path_from_address(address, &abs);
     if (path.empty()) { err = "unsupported D-Bus address " + address; return false; }
+#ifdef SOCK_CLOEXEC
     int fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+#else
+    int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd >= 0) ::fcntl(fd, F_SETFD, FD_CLOEXEC);
+#endif
     if (fd < 0) { err = std::strerror(errno); return false; }
+#ifdef SO_NOSIGPIPE
+    { int one = 1; ::setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one); }
+#endif
     sockaddr_un sa{};
     sa.sun_family = AF_UNIX;
     size_t off = abs ? 1 : 0;
