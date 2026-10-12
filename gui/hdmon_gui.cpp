@@ -24,6 +24,13 @@
 #include <wx/utils.h>
 
 #include <atomic>
+#ifndef __WXMSW__
+#include <signal.h>
+#include <unistd.h>
+#ifdef __APPLE__
+#include <libproc.h>
+#endif
+#endif
 #include <cmath>
 #include <ctime>
 #include <cstdio>
@@ -616,6 +623,37 @@ void MainFrame::OnClose(wxCloseEvent& e) {
     e.Skip();
 }
 
+// ------------------------------------------------------------------ single instance: a new start kills the old copy
+static std::string pid_path() { return data_dir() + "/hdmon-gui.pid"; }
+
+static void kill_old_instance() {
+    long pid = g::parse_pid_file(read_file(pid_path()));
+    if (pid <= 0 || pid == static_cast<long>(wxGetProcessId())) return;
+    std::string image;
+#ifdef __WXMSW__
+    HANDLE p = OpenProcess(SYNCHRONIZE | PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(pid));
+    if (!p) return;
+    wchar_t buf[MAX_PATH * 2];
+    DWORD n = MAX_PATH * 2;
+    if (QueryFullProcessImageNameW(p, 0, buf, &n) && g::is_gui_image(S(wxString(buf, n)))) {
+        TerminateProcess(p, 1);
+        WaitForSingleObject(p, 2000);
+    }
+    CloseHandle(p);
+#else
+    char buf[4096];
+#ifdef __APPLE__
+    int n = proc_pidpath(static_cast<int>(pid), buf, sizeof buf);
+#else
+    ssize_t n = readlink(("/proc/" + std::to_string(pid) + "/exe").c_str(), buf, sizeof buf);
+#endif
+    if (n <= 0 || !g::is_gui_image(std::string(buf, static_cast<size_t>(n)))) return;
+    kill(static_cast<pid_t>(pid), SIGTERM);
+    for (int i = 0; i < 20 && kill(static_cast<pid_t>(pid), 0) == 0; ++i) wxMilliSleep(100);
+    kill(static_cast<pid_t>(pid), SIGKILL);
+#endif
+}
+
 bool HdmonApp::OnInit() {
     SetAppName("hard-drive-monitor");
     SetAppDisplayName("Hard Drive Monitor");
@@ -633,10 +671,21 @@ bool HdmonApp::OnInit() {
     wxInitAllImageHandlers();
 
     single_ = std::make_unique<wxSingleInstanceChecker>("hard-drive-monitor-gui-" + wxGetUserId());
+    if (from_json_.empty() && single_->IsAnotherRunning()) {   // old copy running: kill it, take over
+        kill_old_instance();
+        for (int i = 0; i < 30 && single_->IsAnotherRunning(); ++i) {
+            wxMilliSleep(100);
+            single_ = std::make_unique<wxSingleInstanceChecker>("hard-drive-monitor-gui-" + wxGetUserId());
+        }
+    }
     if (from_json_.empty() && single_->IsAnotherRunning()) {
         wxMessageBox("Hard Drive Monitor is already running in the system tray.",
                      U(std::string("Hard Drive Monitor ") + GUI_VERSION));
         return false;
+    }
+    if (from_json_.empty()) {
+        make_dirs(data_dir());
+        write_file(pid_path(), std::to_string(static_cast<long>(wxGetProcessId())) + "\n");
     }
     cleanup_old_binaries();   // Windows: hdmon-gui.old.exe from a previous update
     SetExitOnFrameDelete(false);
@@ -683,6 +732,8 @@ bool HdmonApp::OnInit() {
 
 int HdmonApp::OnExit() {
     timer_.Stop();
+    if (from_json_.empty() && g::parse_pid_file(read_file(pid_path())) == static_cast<long>(wxGetProcessId()))
+        std::remove(pid_path().c_str());
     if (worker_.joinable()) worker_.join();
     return wxApp::OnExit();
 }

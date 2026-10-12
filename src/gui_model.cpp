@@ -1,3 +1,4 @@
+#include <cctype>
 #include "gui_model.hpp"
 
 #include <algorithm>
@@ -326,6 +327,30 @@ std::vector<int> fit_column_widths(const std::vector<int>& mins, const std::vect
     for (int x : w) total += x;
     w[slack] += avail - static_cast<int>(total);     // rounding remainder (always >= 0)
     return w;
+}
+
+long parse_pid_file(const std::string& text) {
+    size_t i = 0;
+    while (i < text.size() && (text[i] == ' ' || text[i] == '\t')) ++i;
+    long pid = 0;
+    size_t start = i;
+    while (i < text.size() && text[i] >= '0' && text[i] <= '9') {
+        if (pid > 100000000L) return 0;
+        pid = pid * 10 + (text[i++] - '0');
+    }
+    if (i == start || (i < text.size() && text[i] != '\n' && text[i] != '\r' && text[i] != ' ')) return 0;
+    return pid;
+}
+
+bool is_gui_image(const std::string& image) {
+    std::string n = image;
+    const std::string del = " (deleted)";
+    if (n.size() > del.size() && n.compare(n.size() - del.size(), del.size(), del) == 0) n.resize(n.size() - del.size());
+    size_t slash = n.find_last_of("/\\");
+    if (slash != std::string::npos) n = n.substr(slash + 1);
+    for (char& c : n) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return n == "hdmon-gui" || n == "hdmon-gui.exe" || n == "hdmon-gui.old.exe" ||
+           n == "hard drive monitor";   // macOS app bundle executable
 }
 
 }  // namespace hdmon::gui

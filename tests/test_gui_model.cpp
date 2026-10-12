@@ -336,3 +336,25 @@ TEST_CASE("fit_column_widths fills the list exactly, Model takes slack, never be
     CHECK(fit_column_widths(mins, hdr, 100, 1) == hdr);        // too narrow even for headers
     CHECK(fit_column_widths({10, 300}, {80, 20}, 400, 1) == std::vector<int>{80, 320});   // header beats content
 }
+
+TEST_CASE("single-instance pid file helpers") {
+    CHECK(g::parse_pid_file("4321\n") == 4321);
+    CHECK(g::parse_pid_file("77") == 77);
+    CHECK(g::parse_pid_file("77\r\nC:\\x\\hdmon-gui.exe\r\n") == 77);
+    CHECK(g::parse_pid_file("") == 0);
+    CHECK(g::parse_pid_file("abc\n") == 0);
+    CHECK(g::parse_pid_file("12x\n") == 0);
+    CHECK(g::parse_pid_file("-5\n") == 0);
+    CHECK(g::parse_pid_file("99999999999999999999\n") == 0);
+    CHECK(g::is_gui_image("/home/r/.local/bin/hdmon-gui"));
+    CHECK(g::is_gui_image("/home/r/.local/bin/hdmon-gui (deleted)"));
+    CHECK(g::is_gui_image("C:\\Program Files\\hard-drive-monitor\\bin\\HDMON-GUI.EXE"));
+    CHECK(g::is_gui_image("C:\\x\\hdmon-gui.old.exe"));
+    CHECK(g::is_gui_image("/Applications/Hard Drive Monitor.app/Contents/MacOS/hdmon-gui"));
+    CHECK(g::is_gui_image("/Applications/Hard Drive Monitor.app/Contents/MacOS/Hard Drive Monitor"));
+    CHECK_FALSE(g::is_gui_image("/usr/bin/hdmon"));
+    CHECK_FALSE(g::is_gui_image("/usr/bin/bash"));
+    CHECK_FALSE(g::is_gui_image("/tmp/hdmon-gui-evil"));
+    CHECK_FALSE(g::is_gui_image("C:\\x\\explorer.exe"));
+    CHECK_FALSE(g::is_gui_image(""));
+}

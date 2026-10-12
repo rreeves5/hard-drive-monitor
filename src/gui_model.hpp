@@ -83,4 +83,11 @@ bool save_gui_settings(const std::string& config_path, const GuiSettings& s, std
 // header width. If even the header widths do not fit, the header widths are returned.
 std::vector<int> fit_column_widths(const std::vector<int>& mins, const std::vector<int>& header, int avail, size_t slack);
 
+// Single-instance takeover: hdmon-gui.pid holds the running copy's pid.
+// Returns the pid (> 0) or 0 when the text is not a valid pid file.
+long parse_pid_file(const std::string& text);
+// True only when the file name of `image` is hdmon-gui (or hdmon-gui.exe / hdmon-gui.old.exe, the copy a
+// Windows self-update leaves running) or "Hard Drive Monitor" (the macOS app bundle). Linux "/path (deleted)" suffixes are ignored.
+bool is_gui_image(const std::string& image);
+
 }  // namespace hdmon::gui
