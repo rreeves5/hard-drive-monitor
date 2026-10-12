@@ -30,6 +30,9 @@
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
 #endif
+#ifdef __linux__
+#include <sys/xattr.h>
+#endif
 extern char** environ;
 #endif
 
@@ -199,6 +202,29 @@ std::string get_env(const char* k) {
 }
 bool file_exists(const std::string& p) { std::error_code ec; return fs::is_regular_file(p, ec); }
 bool is_dir(const std::string& p) { std::error_code ec; return fs::is_directory(p, ec); }
+std::string file_caps_get(const std::string& path) {
+#ifdef __linux__
+    char buf[256];
+    ssize_t n = ::getxattr(path.c_str(), "security.capability", buf, sizeof buf);
+    if (n > 0) return std::string(buf, static_cast<size_t>(n));
+#else
+    (void)path;
+#endif
+    return {};
+}
+
+bool file_caps_set(const std::string& path, const std::string& blob, std::string& err) {
+#ifdef __linux__
+    if (::setxattr(path.c_str(), "security.capability", blob.data(), blob.size(), 0) == 0) return true;
+    err = std::strerror(errno);
+    return false;
+#else
+    (void)path; (void)blob;
+    err = "file capabilities are Linux-only";
+    return false;
+#endif
+}
+
 bool is_executable(const std::string& p) {
 #ifdef _WIN32
     std::error_code ec;

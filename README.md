@@ -81,7 +81,7 @@ without sudo (`--setcap`, see [SMART access](#smart-access-root--admin)).
 | `hdmon history` | Health/temperature sparklines from the SQLite log and every counter that got worse. |
 | `hdmon check` | One scheduled-style run: record, alert on worsening, exit code 0/1/2 = OK/WARNING/CRITICAL (3 = error). |
 | `hdmon watch --interval 1h` | Loop mode (`check` every interval; `--count N` to stop). |
-| `hdmon selftest <dev> [short\|long]` | Starts a SMART self-test and prints the expected duration. `--results` shows the self-test log. |
+| `hdmon selftest <dev> [short\|long]` | Starts a SMART self-test natively (ATA SMART EXECUTE OFF-LINE / NVMe Device Self-test; smartctl only as fallback) and prints the expected duration. `--results` shows the self-test log. |
 | `hdmon install-service` / `uninstall-service` | Hourly schedule: systemd user timer / launchd agent / Task Scheduler. |
 | `hdmon init-config` | Writes a commented sample config. |
 | `hdmon alert-test` | Sends a test notification (and e-mail, if enabled). |
@@ -128,7 +128,7 @@ member disks indented underneath. A disk that belongs to an array is listed only
 | Linux md (mdadm) | `/proc/mdstat` + `/sys/block/md*/md/` (level, array_state, degraded, sync_action, sync_completed, per-member state/slot) | `mdadm --detail` only as an optional extra |
 | Windows Storage Spaces | WMI `root\Microsoft\Windows\Storage`: `MSFT_StoragePool`, `MSFT_VirtualDisk`, `MSFT_PhysicalDisk`, `MSFT_StorageJob` (repair %) | PowerShell `Get-StoragePool`/`Get-VirtualDisk`/... only if WMI fails |
 | Intel RST / VMD | RAID volumes show up as virtual disks; member state from `rstcli`/`IntelVROCCli` when installed | members behind RST are not visible to SMART without the vendor driver |
-| macOS AppleRAID | `diskutil appleRAID list` | mirror/stripe/concat, rebuild % |
+| macOS AppleRAID | IOKit `AppleRAIDSet` / `AppleRAIDMember` registry properties | mirror/stripe/concat, rebuild %; `diskutil appleRAID list` only if IOKit fails |
 | Hardware RAID cards | `smartctl --scan-open` members (`-d megaraid,N`, `aacraid`, `areca`, `3ware`, `cciss`, `hpt`, `sssraid`, `jmb39x`) grouped per controller | needs smartmontools; logical-drive state needs the vendor tool, so the array shows the worst member |
 
 - **Array model:** name, type/level, backend, state (OK / DEGRADED / REBUILDING / FAILED), rebuild %, size and
@@ -183,8 +183,8 @@ details use `tests/fixtures/raid/sample`) on Linux/GTK under Xvfb, regenerated w
   rules as `hdmon check` alerts), you get a notification plus a red "Drive in danger" window, and an e-mail if
   `[email]` is enabled. Turn this off with "Alert me when a drive is in danger".
 - **Options:** Start at login (off by default, like the VB app), danger alerts, scan interval, and **Updates**:
-  "Check for updates automatically" and "Install updates automatically" are **both off by default**. They are
-  the same `[update] auto_check` / `auto_install` settings the CLI uses. **Check now** asks GitHub, and installs
+  "Check for updates automatically" is **off by default** and only notifies (the same `[update] auto_check`
+  setting the CLI uses). Updates are never downloaded or installed on their own: **Check now** asks GitHub, and installs
   only after you confirm, with a SHA-256 check. On macOS it opens the download page instead.
   Settings are stored in `config.toml` (`[gui] alert_on_danger`, `scan_interval_minutes`).
 - **Start at login** works differently per system:
@@ -240,7 +240,7 @@ Prebuilt binaries (also attached to GitHub releases by CI for `v*` tags):
    front). macOS needs nothing for internal drives.
 5. Runs `hdmon install-service` to schedule the background check (skip with `--no-service`).
 6. `--system` also symlinks `hdmon` into `/usr/local/bin` (uses sudo).
-7. Leaves automatic update checks **off**. `--enable-auto-update` turns on the daily check (notify only).
+7. Leaves automatic update checks **off** (turn on the daily notify-only check later with `hdmon update --enable-auto-check`).
 
 `install.ps1` (Windows):
 
@@ -253,7 +253,7 @@ Prebuilt binaries (also attached to GitHub releases by CI for `v*` tags):
    windows see it. `hdmon` then works in cmd.exe and PowerShell alike (no shim needed any more).
 4. Runs `hdmon install-service`: a Task Scheduler task at logon + hourly. When the script runs **elevated**
    the task gets **highest privileges**, so it can open the drives for full SMART data (skip with `-NoService`).
-5. Leaves automatic update checks **off**. `-EnableAutoUpdate` turns on the daily check (notify only).
+5. Leaves automatic update checks **off** (turn on the daily notify-only check later with `hdmon update --enable-auto-check`).
 
 After installing, **open a new terminal / Command Prompt / PowerShell** and run `hdmon status`.
 
@@ -332,8 +332,9 @@ Reading SMART data needs raw device access.
 
    hdmon then runs as you and can read the drives. This was tested as an unprivileged user (uid 1000) in the
    QEMU harness: no capabilities → every drive `UNKNOWN` with a hint; with them → full SMART. The capabilities
-   belong to the file, so replacing the binary (`hdmon update`, re-installing) drops them; run the command
-   again afterwards. `setcap` is in `libcap2-bin` (Debian/Ubuntu) or `libcap` (Fedora, Arch). It does not work
+   belong to the file, so replacing the binary drops them. Since 0.2.5 `hdmon update` copies them onto the new
+   file (works when it runs as root; otherwise it prints the exact `setcap` command), and `install.sh`
+   re-applies them when the old binary had them. `setcap` is in `libcap2-bin` (Debian/Ubuntu) or `libcap` (Fedora, Arch). It does not work
    on filesystems mounted `nosuid`.
 3. **Run the service as root** (`hdmon install-service --system` prints a root systemd unit / LaunchDaemon and
    the exact commands to install it; it never installs root services by itself). A root service keeps its
@@ -359,7 +360,10 @@ records to the history database and alerts you only when something got worse.
 | Linux (systemd) | User timer `~/.config/systemd/user/hard-drive-monitor.{service,timer}`: 2 min after your session starts, then hourly (`Persistent=true` catches up after sleep). | `systemctl --user list-timers hard-drive-monitor.timer` | `hdmon uninstall-service` |
 | Linux (no systemd user session, e.g. WSL/containers) | Two lines in your **crontab** marked `# hard-drive-monitor`: `@reboot` (+2 min) and hourly. | `crontab -l` | `hdmon uninstall-service` |
 | macOS | launchd agent `~/Library/LaunchAgents/com.hard-drive-monitor.check.plist`: `RunAtLoad` (at login) + `StartInterval` 3600. Log: `~/Library/Logs/hard-drive-monitor.log`. | `launchctl print gui/$UID/com.hard-drive-monitor.check` | `hdmon uninstall-service` |
-| Windows | Task Scheduler task `hard-drive-monitor`: at logon (+2 min) and every hour, `hdmonw.exe check --quiet` (`hdmonw.exe` is the GUI-subsystem build, so no console window flashes). Highest privileges when installed from an elevated window. | `schtasks /Query /TN hard-drive-monitor` | `hdmon uninstall-service` |
+| Windows | Task Scheduler task `hard-drive-monitor` (registered through the Task Scheduler COM API; `schtasks` only as fallback): at logon (+2 min) and every hour, `hdmonw.exe check --quiet` (`hdmonw.exe` is the GUI-subsystem build, so no console window flashes). Highest privileges when installed from an elevated window. | `schtasks /Query /TN hard-drive-monitor` | `hdmon uninstall-service` |
+
+Since 0.2.5 these are set up through native APIs: systemd's D-Bus `org.freedesktop.systemd1.Manager`
+(`systemctl --user` only as fallback), Task Scheduler COM on Windows, and `SMJobSubmit` on macOS (`launchctl` as fallback).
 
 `hdmon install-service` prints everything it writes. Options: `--interval 30m`, `--dry-run` (print only),
 `--no-enable` (write files, don't enable), `--highest` (Windows: force highest privileges), `--system`
@@ -382,8 +386,9 @@ uncorrected errors. A drive that has had 12 reallocated sectors for a year does 
 alerts again the moment it becomes 13. Wear and unsafe-shutdown counts rise normally, so they are shown as
 trends in `hdmon history` but do not alert on their own.
 
-- Desktop: `notify-send` (Linux), `osascript` (macOS), PowerShell toast on Windows (BurntToast module if
-  installed, otherwise a tray balloon). If none is available, it says so and skips.
+- Desktop (native since 0.2.5): Linux sends `org.freedesktop.Notifications.Notify` over the D-Bus session bus
+  directly; Windows shows a `Shell_NotifyIcon` balloon; macOS uses `UNUserNotificationCenter` inside the app
+  bundle. `notify-send`, `osascript` and PowerShell are only fallbacks. If nothing works, it says so and skips.
 - E-mail: SMTP settings in the config file. The native build has no SMTP library; it sends mail by running the
   **`curl` command-line tool** (`smtp://` + STARTTLS via `--ssl-reqd`, or `smtps://` when `ssl = true`). curl
   ships with Windows 10 1803+ and macOS, and is one package away on Linux (`sudo apt install curl`). The
@@ -429,9 +434,8 @@ hdd_temp_crit = 55
 [ignore]
 devices = ["/dev/sdz"]
 
-[update]                 # both OFF by default - see "Updates"
+[update]                 # OFF by default - see "Updates"
 auto_check = false
-auto_install = false
 ```
 
 The file is read by a small built-in parser that handles the simple TOML subset above (`[sections]`,
@@ -478,19 +482,17 @@ hdmon update --yes            # same, without the question (-y)
 ```toml
 [update]
 auto_check = false     # default
-auto_install = false   # default
 ```
 
 - `auto_check = true`: the scheduled `hdmon check` (and `watch`) checks GitHub **at most once every 24 hours**
   (the time is kept in `update-state.json` next to the history database). When a new release appears, you get
   **one desktop notification per new version** (not with `--no-alert`) and a line in the output. **Nothing is
   installed.**
-- `auto_install = true` (only together with `auto_check = true`): the scheduled check also downloads, verifies
-  and installs the new release quietly, then sends a notification about it.
+- Updates are **never downloaded or installed automatically** (the old `auto_install` key was removed in 0.2.5
+  and is ignored if still present). Install with `hdmon update` or the GUI's **Check now**.
 - With `auto_check = false` (the default), `check` never touches the network.
-- Toggle it with `hdmon update --enable-auto-check` / `hdmon update --disable-auto-check` (the second also sets
-  `auto_install = false`), or edit `config.toml`. The installers never turn this on unless you pass
-  `./install.sh --enable-auto-update` / `install.ps1 -EnableAutoUpdate`.
+- Toggle it with `hdmon update --enable-auto-check` / `hdmon update --disable-auto-check`, or edit `config.toml`.
+  The installers never turn it on.
 
 ## How the scores work
 

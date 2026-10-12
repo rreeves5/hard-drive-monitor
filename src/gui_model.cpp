@@ -156,7 +156,7 @@ std::string tooltip_text(const std::vector<Result>& results, const std::vector<R
     if (arrays.empty()) return tooltip_text(results, version, max_len);
     std::string t = "Hard Drive Monitor " + version;
     for (auto& r : top_level(results, arrays)) t += "\n" + drive_name(r.first) + " " + health_text(r.second);
-    for (auto& a : arrays) t += "\n" + a.name + " " + state_text(a);
+    for (auto& a : arrays) t += "\n" + a.name + " " + state_label(a, results);
     return clip(t, max_len);
 }
 
@@ -190,7 +190,7 @@ std::vector<DisplayRow> display_rows(const std::vector<Result>& results, const s
         r.cells[1] = (ar.level.empty() ? std::string("RAID") : ar.level) + " \u00B7 " + backend_label(ar.backend);
         r.cells[2] = ar.size_bytes ? fmt_size(ar.size_bytes) : "\u2014";
         r.cells[3] = "\u2014";
-        r.cells[4] = state_text(ar);
+        r.cells[4] = state_label(ar, results);
         rows.push_back(r);
         if (!r.expanded) continue;
         for (size_t mi = 0; mi < ar.members.size(); ++mi) {
@@ -201,24 +201,24 @@ std::vector<DisplayRow> display_rows(const std::vector<Result>& results, const s
             c.member = static_cast<int>(mi);
             const Result* mr = member_result(m, results);
             std::string role = m.role == "active" ? "" : " (" + m.role + ")";
+            std::string rt = member_role_text(m);
+            c.status = member_status(m, mr);   // failed/missing: Critical whatever SMART says; rebuilding: Warning; spare: OK
             if (mr) {
                 c.result = static_cast<int>(mr - results.data());
-                c.status = mr->second.status;
                 std::string label = disk_label(mr->first);
                 c.cells[0] = "      " + (label.empty() ? drive_name(mr->first) : label) + role;
                 c.cells[1] = mr->first.model.value_or("");
                 c.cells[2] = size_text(mr->first);
                 c.cells[3] = temp_text(mr->first);
-                c.cells[4] = health_text(mr->second);
+                c.cells[4] = rt.empty() ? health_text(mr->second) : rt;
             } else {
-                c.status = m.role == "failed" || m.role == "missing" ? "CRITICAL" : "UNKNOWN";
                 std::string dev = m.device.empty() ? std::string("(missing disk)") : m.device;
                 if (starts_with(dev, "/dev/")) dev = dev.substr(5);
                 c.cells[0] = "      " + dev + role;
                 c.cells[1] = m.serial ? "serial " + *m.serial : "";
                 c.cells[2] = m.size_bytes ? fmt_size(m.size_bytes) : "\u2014";
                 c.cells[3] = "\u2014";
-                c.cells[4] = m.role == "failed" ? "failed" : "n/a";
+                c.cells[4] = rt.empty() ? "n/a" : rt;
             }
             rows.push_back(c);
         }
@@ -229,7 +229,7 @@ std::vector<DisplayRow> display_rows(const std::vector<Result>& results, const s
 std::vector<std::pair<std::string, std::string>> array_detail_rows(const RaidArray& a, const std::vector<Result>& results) {
     std::vector<std::pair<std::string, std::string>> rows;
     auto put = [&](const std::string& k, const std::string& v) { rows.emplace_back(k, v); };
-    put("Status", status_label(array_status(a, results)) + " (" + state_text(a) + ")");
+    put("Status", status_label(array_status(a, results)) + " (" + state_label(a, results) + ")");
     put("Name", a.name);
     if (!a.level.empty()) put("Type", a.level);
     put("Backend", backend_label(a.backend));
@@ -240,9 +240,9 @@ std::vector<std::pair<std::string, std::string>> array_detail_rows(const RaidArr
     for (auto& m : a.members) {
         const Result* r = member_result(m, results);
         std::string label = r ? (disk_label(r->first).empty() ? drive_name(r->first) : disk_label(r->first)) : m.device;
-        std::string v = m.role + (r ? ", " + status_label(r->second.status) + " " + health_text(r->second) +
-                                          (r->first.model ? ", " + *r->first.model : "")
-                                    : ", no SMART data");
+        std::string rt = member_role_text(m);
+        std::string v = (rt.empty() ? std::string("Active") : rt) + " \u00B7 " + status_label(member_status(m, r)) +
+                        (r ? ", SMART " + health_text(r->second) + (r->first.model ? ", " + *r->first.model : "") : ", no SMART data");
         put("Member " + (m.slot ? std::to_string(*m.slot) : std::string("-")) + " " + label, v);
     }
     if (!a.id.empty()) put("Id", a.id);
@@ -281,7 +281,6 @@ GuiSettings load_gui_settings(const json& cfg) {
     if (auto n = opt_int(jget(g, "scan_interval_minutes"))) s.scan_interval_minutes = static_cast<int>(std::clamp<int64_t>(*n, 1, 1440));
     const json& u = jget(cfg, "update");
     s.auto_check = truthy(jget(u, "auto_check"));
-    s.auto_install = truthy(jget(u, "auto_install"));
     return s;
 }
 
@@ -290,8 +289,7 @@ bool save_gui_settings(const std::string& path, const GuiSettings& s, std::strin
     int n = std::clamp(s.scan_interval_minutes, 1, 1440);
     return set_config_value(path, "gui", "alert_on_danger", b(s.alert_on_danger), err) &&
            set_config_value(path, "gui", "scan_interval_minutes", std::to_string(n), err) &&
-           set_config_value(path, "update", "auto_check", b(s.auto_check), err) &&
-           set_config_value(path, "update", "auto_install", b(s.auto_install), err);
+           set_config_value(path, "update", "auto_check", b(s.auto_check), err);
 }
 
 }  // namespace hdmon::gui

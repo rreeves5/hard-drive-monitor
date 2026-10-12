@@ -213,3 +213,79 @@ TEST_CASE("real-kernel capture (QEMU NVMe via NVME_IOCTL_ADMIN_CMD) matches smar
     CHECK(assess(n).health == assess(s).health);
 }
 }
+
+TEST_CASE("native self-test: command codes and log decoders") {
+    using namespace hdmon::native;
+    CHECK(ata_selftest_subcommand("short") == std::optional<uint8_t>(1));
+    CHECK(ata_selftest_subcommand("long") == std::optional<uint8_t>(2));
+    CHECK(ata_selftest_subcommand("conveyance") == std::optional<uint8_t>(3));
+    CHECK(ata_selftest_subcommand("abort") == std::optional<uint8_t>(0x7F));
+    CHECK_FALSE(ata_selftest_subcommand("bogus"));
+    CHECK(nvme_selftest_code("short") == std::optional<uint32_t>(1));
+    CHECK(nvme_selftest_code("long") == std::optional<uint32_t>(2));
+    CHECK(nvme_selftest_code("abort") == std::optional<uint32_t>(0xF));
+    CHECK_FALSE(nvme_selftest_code("conveyance"));
+
+    // ATA log: 3 entries, most recent = index 3 (wraps the ring correctly), one read failure at LBA 0x12345
+    uint8_t a[512] = {0};
+    a[0] = 1;
+    auto put = [&](int i, uint8_t type, uint8_t status, uint16_t hours, uint32_t lba) {
+        uint8_t* e = a + 2 + i * 24;
+        e[0] = type; e[1] = status; e[2] = hours & 0xFF; e[3] = hours >> 8;
+        for (int k = 0; k < 4; ++k) e[5 + k] = static_cast<uint8_t>(lba >> (8 * k));
+    };
+    put(0, 0x01, 0x00, 100, 0xFFFFFFFF);
+    put(1, 0x02, 0x73, 250, 0x12345);
+    put(2, 0x01, 0xF3, 300, 0);
+    a[508] = 3;
+    json j = ata_selftest_log_json(a);
+    REQUIRE(j["table"].size() == 3);
+    CHECK(j["count"] == 3);
+    CHECK(j["table"][0]["status"]["string"] == "Self-test routine in progress");
+    CHECK(j["table"][0]["status"]["remaining_percent"] == 30);
+    CHECK_FALSE(j["table"][0]["status"].contains("passed"));
+    CHECK(j["table"][1]["type"]["string"] == "Extended offline");
+    CHECK(j["table"][1]["status"]["string"] == "Completed: read failure");
+    CHECK(j["table"][1]["status"]["passed"] == false);
+    CHECK(j["table"][1]["lba"] == 0x12345);
+    CHECK(j["table"][2]["lifetime_hours"] == 100);
+    CHECK(j["table"][2]["status"]["passed"] == true);
+    CHECK_FALSE(j["table"][2].contains("lba"));
+    uint8_t empty[512] = {0};
+    CHECK(ata_selftest_log_json(empty)["table"].empty());
+
+    // NVMe log: short test running at 40%, one completed extended test, rest unused (result Fh)
+    uint8_t n[564] = {0};
+    n[0] = 1; n[1] = 40;
+    for (int i = 0; i < 20; ++i) n[4 + i * 28] = 0x0F;
+    n[4] = 0x20;        // code 2 extended, result 0
+    n[4 + 4] = 0x10;    // POH 16
+    json nj = nvme_selftest_log_json(n);
+    CHECK(nj["current_self_test_operation"]["string"] == "Short self-test in progress");
+    CHECK(nj["current_self_test_completion_percent"] == 40);
+    REQUIRE(nj["table"].size() == 1);
+    CHECK(nj["table"][0]["self_test_code"]["string"] == "Extended");
+    CHECK(nj["table"][0]["self_test_result"]["string"] == "Completed without error");
+    CHECK(nj["table"][0]["power_on_hours"] == 16);
+    // and the shared parser turns it into the Drive model
+    json full = assemble("/dev/nvme0", "NVMe", json::object(), json::object());
+    full["nvme_self_test_log"] = nj;
+    full["nvme_smart_health_information_log"] = {{"temperature", 30}};
+    Drive d = parse_smartctl(full, "/dev/nvme0");
+    CHECK(d.self_test["in_progress"] == true);
+    CHECK(d.self_test["remaining_percent"] == 60);
+    REQUIRE(d.self_test_log.size() == 1);
+    CHECK(d.self_test_log[0]["passed"] == true);
+}
+
+TEST_CASE("native self-test log decodes like smartctl (QEMU disk after a native short test)") {
+    std::string raw = read_file(th::fix("native/qemu/hdd-selftest-log.bin"));
+    REQUIRE(raw.size() == 512);
+    json mine = hdmon::native::ata_selftest_log_json(reinterpret_cast<const uint8_t*>(raw.data()));
+    json theirs = th::load("native/qemu/smartctl-selftest.json")["ata_smart_self_test_log"]["standard"];
+    CHECK(mine["revision"] == theirs["revision"]);
+    CHECK(mine["count"] == theirs["count"]);
+    REQUIRE(mine["table"].size() == theirs["table"].size());
+    for (size_t i = 0; i < mine["table"].size(); ++i)
+        CHECK(th::plain(mine["table"][i]) == th::plain(theirs["table"][i]));
+}

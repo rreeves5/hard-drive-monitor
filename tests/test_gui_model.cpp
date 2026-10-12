@@ -95,7 +95,6 @@ TEST_CASE("GUI settings: defaults, clamping, save keeps updates off unless chose
     CHECK(d.alert_on_danger);
     CHECK(d.scan_interval_minutes == 60);
     CHECK_FALSE(d.auto_check);
-    CHECK_FALSE(d.auto_install);
     th::TempDir tmp;
     std::string p = tmp.file("c.toml");
     write_file(p, "[gui]\nscan_interval_minutes = 99999\nalert_on_danger = false\n");
@@ -108,7 +107,7 @@ TEST_CASE("GUI settings: defaults, clamping, save keeps updates off unless chose
     json c = load_config(p);
     CHECK(c["gui"]["scan_interval_minutes"] == 15);
     CHECK(c["update"]["auto_check"] == true);
-    CHECK(c["update"]["auto_install"] == false);
+    CHECK_FALSE(c["update"].contains("auto_install"));
 }
 
 TEST_CASE("autostart files") {
@@ -129,6 +128,11 @@ TEST_CASE("autostart files") {
     CHECK(th::has(launch_agent_plist({"a&b<c"}), "<string>a&amp;b&lt;c</string>"));
     auto args = windows_autostart_task_args("C:\\Users\\Rich\\AppData\\Local\\hard-drive-monitor\\bin\\hdmon-gui.exe");
     CHECK(join(args, "|") == "schtasks|/Create|/TN|Hard Drive Monitor GUI|/TR|\"C:\\Users\\Rich\\AppData\\Local\\hard-drive-monitor\\bin\\hdmon-gui.exe\"|/SC|ONLOGON|/RL|HIGHEST|/F");
+    std::string tx = windows_autostart_task_xml("C:\\A&B\\hdmon-gui.exe", "PC\\rich");
+    CHECK(th::has(tx, "<LogonTrigger><Enabled>true</Enabled><UserId>PC\\rich</UserId></LogonTrigger>"));
+    CHECK(th::has(tx, "<RunLevel>HighestAvailable</RunLevel>"));
+    CHECK(th::has(tx, "<Command>C:\\A&amp;B\\hdmon-gui.exe</Command>"));
+    CHECK(th::has(tx, "<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>"));
     CHECK(windows_run_value("C:\\x\\hdmon-gui.exe") == "\"C:\\x\\hdmon-gui.exe\"");
     std::string lp = replace_all(autostart_path(OS::Linux), "\\", "/");
     CHECK(ends_with(lp, "autostart/hard-drive-monitor.desktop"));
@@ -218,6 +222,16 @@ TEST_CASE("RAID rows: array bold with arrow and state, members indented, raw dis
     CHECK(rows[md0_at + 1].cells[0] == "      sdb");
     CHECK(rows[md0_at + 1].status == "CRITICAL");
     CHECK(rows[md0_at + 2].cells[0] == "      sdd (failed)");
+    // a failed member is Critical red even though its own SMART is 100%
+    CHECK(rows[md0_at + 2].status == "CRITICAL");
+    CHECK(g::row_tint(rows[md0_at + 2].status) == "#FF0000");
+    CHECK(rows[md0_at + 2].cells[4] == "Failed (removed from array)");
+    // the controller's own state is unknown: rolled up from the disks, and the label says so
+    for (auto& r : rows)
+        if (r.kind == g::DisplayRow::ARRAY && th::has(r.cells[0], "MegaRAID")) {
+            CHECK(r.cells[4] == "Worst disk OK (controller state not readable)");
+            CHECK(r.status == "OK");
+        }
     // sdb/sdd only appear as members
     int sdb = 0;
     for (auto& r : rows) sdb += th::has(r.cells[0], "sdb");
@@ -276,7 +290,7 @@ TEST_CASE("RAID: tray counts arrays, tooltip lists them, details rows, rebuild t
     CHECK(det[0].first == "Status");
     CHECK(det[0].second == "Warning (Rebuilding 45.0%)");
     bool member = false;
-    for (auto& [k, v] : det) member = member || (k == "Member 1 sdc" && th::has(v, "rebuilding"));
+    for (auto& [k, v] : det) member = member || (k == "Member 1 sdc" && v == "Rebuilding \u00B7 Warning, SMART 100%");
     CHECK(member);
 
     // a member with no SMART data (e.g. Storage Spaces disk not matched) still shows, failed ones in red

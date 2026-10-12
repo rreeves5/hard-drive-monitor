@@ -1,4 +1,5 @@
 // Opt-in self-update: pure helpers + the update flow with fake network/binary hooks (no real network).
+#include <cstring>
 #include <filesystem>
 
 #include "helpers.hpp"
@@ -118,10 +119,10 @@ TEST_CASE("checksum lines and SHA-256") {
 TEST_CASE("config defaults: automatic updates are off") {
     json d = default_config();
     CHECK(d["update"]["auto_check"] == false);
-    CHECK(d["update"]["auto_install"] == false);
+    CHECK_FALSE(d["update"].contains("auto_install"));          // automatic installs were removed in 0.2.5
     json s = parse_simple_toml(SAMPLE_CONFIG);
     CHECK(s["update"]["auto_check"] == false);
-    CHECK(s["update"]["auto_install"] == false);
+    CHECK_FALSE(s["update"].contains("auto_install"));
     th::TempDir tmp;
     CHECK(load_config(tmp.file("none.toml"))["update"]["auto_check"] == false);
 }
@@ -133,7 +134,7 @@ TEST_CASE("set_config_value edits in place and --enable/--disable-auto-check") {
     CHECK(run({"update", "--enable-auto-check", "--config", p}).rc == 0);
     json c = load_config(p);
     CHECK(c["update"]["auto_check"] == true);
-    CHECK(c["update"]["auto_install"] == false);
+    CHECK_FALSE(c["update"].contains("auto_install"));
     CHECK(c["email"]["port"] == 587);                            // rest of the file untouched
     CHECK(th::has(read_file(p), "# auto_check: the scheduled"));
     CHECK(run({"update", "--disable-auto-check", "--config", p}).rc == 0);
@@ -155,7 +156,7 @@ TEST_CASE("check does not touch the network when auto_check is false") {
     net.publish("v9.9.9", all_assets());
     th::TempDir tmp;
     std::string cfg = tmp.file("c.toml");
-    write_file(cfg, "[update]\nauto_check = false\nauto_install = true\n");   // auto_install alone does nothing
+    write_file(cfg, "[update]\nauto_check = false\nauto_install = true\n");   // obsolete key: ignored
     auto r = run({"check", "--from-json", th::fix(), "--no-record", "--config", cfg, "--db", tmp.file("h.db")});
     CHECK(r.rc == 2);
     CHECK(net.fetches == 0);
@@ -268,7 +269,72 @@ TEST_CASE("update installs a verified binary in place; bad checksum changes noth
     CHECK(run({"update", "--json", "--config", cfg}).rc == 2);
 }
 
-TEST_CASE("auto_install installs quietly only when both keys are true") {
+TEST_CASE("update keeps Linux setcap capabilities, or warns clearly when it cannot") {
+    if (current_os() == OS::Windows) return;
+    FakeNet net;
+    th::TempDir tmp;
+    std::string cfg = tmp.file("none.toml");
+    std::string self = tmp.file("hdmon");
+    write_file(self, "OLD");
+    update_hooks().self_path = self;
+    const std::string blob("\x01\x00\x00\x02\x00\x00\x22\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00", 20);
+    std::string set_on, set_blob;
+    bool allow = true;
+    update_hooks().caps_get = [&](const std::string& p) { return p == self && read_file(p) == "OLD" ? blob : std::string(); };
+    update_hooks().caps_set = [&](const std::string& p, const std::string& b, std::string& e) {
+        set_on = p; set_blob = b;
+        if (!allow) e = "Operation not permitted";
+        return allow;
+    };
+    net.publish("v9.3.0", all_assets());
+    auto r = run({"update", "-y", "--config", cfg});
+    CHECK(r.rc == 0);
+    CHECK(set_blob == blob);
+    CHECK(th::has(set_on, ".hdmon.update-"));   // set on the new file before the atomic rename
+    CHECK(th::has(r.out, "re-applied the SMART capabilities"));
+    CHECK_FALSE(th::has(r.err, "WARNING"));
+
+    write_file(self, "OLD");
+    allow = false;
+    r = run({"update", "-y", "--config", cfg, "--json"});
+    CHECK(r.rc == 0);
+    json j = json::parse(r.out);
+    REQUIRE(j["warnings"].size() == 1);
+    std::string w = j["warnings"][0].get<std::string>();
+    CHECK(th::has(w, "had SMART capabilities"));
+    CHECK(th::has(w, "Operation not permitted"));
+    CHECK(th::has(w, "sudo setcap cap_sys_rawio,cap_sys_admin,cap_dac_read_search+ep " + self));
+}
+
+#if defined(__linux__)
+#include <unistd.h>
+TEST_CASE("update copies the real security.capability xattr (root only; run in tools/vm-verify)") {
+    if (geteuid() != 0) return;
+    FakeNet net;
+    update_hooks().caps_get = [](const std::string& p) { return file_caps_get(p); };
+    update_hooks().caps_set = [](const std::string& p, const std::string& b, std::string& e) { return file_caps_set(p, b, e); };
+    th::TempDir tmp;
+    std::string self = tmp.file("hdmon");
+    write_file(self, "OLD");
+    update_hooks().self_path = self;
+    // VFS_CAP_REVISION_2, effective: permitted = CAP_DAC_READ_SEARCH(2) | CAP_SYS_RAWIO(17) | CAP_SYS_ADMIN(21)
+    uint32_t perm = (1u << 2) | (1u << 17) | (1u << 21);
+    std::string blob(20, '\0');
+    uint32_t words[5] = {0x02000001u, perm, 0, 0, 0};
+    std::memcpy(&blob[0], words, 20);
+    std::string err;
+    REQUIRE_MESSAGE(file_caps_set(self, blob, err), err);
+    REQUIRE(file_caps_get(self) == blob);
+    net.publish("v9.3.0", all_assets());
+    auto r = th::run({"update", "-y", "--config", tmp.file("none.toml")});
+    CHECK(r.rc == 0);
+    CHECK(read_file(self) != "OLD");
+    CHECK(file_caps_get(self) == blob);
+    MESSAGE("root xattr round trip: " << std::string(file_caps_get(self) == blob ? "capabilities kept" : "LOST"));
+}
+#endif
+
+TEST_CASE("the scheduled check never installs, even with an old auto_install = true in config") {
     FakeNet net;
     th::TempDir tmp;
     std::string self = tmp.file(current_os() == OS::Windows ? "hdmon.exe" : "hdmon");
@@ -279,8 +345,9 @@ TEST_CASE("auto_install installs quietly only when both keys are true") {
     write_file(cfg, "[update]\nauto_check = true\nauto_install = true\n");
     auto r = run({"check", "--from-json", th::fix(), "--no-record", "--no-alert", "--config", cfg, "--db", tmp.file("h.db"), "--json"});
     json u = json::parse(r.out)["update"];
-    CHECK(u["installed"] == true);
-    CHECK(read_file(self) == my_asset_body());
-    CHECK(net.notifies == 0);                                    // --no-alert
+    CHECK(u["update_available"] == true);
+    CHECK_FALSE(u.contains("installed"));
+    CHECK(read_file(self) == "OLD");
+    CHECK(net.downloads == 0);
 }
 }

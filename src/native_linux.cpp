@@ -220,7 +220,11 @@ static ReadResult read_ata(const Device& dev) {
     Rc rt = ata_passthrough(fd, use16, {0xB0, 0xD1, 1, 0, 0x4F, 0xC2}, thr, nullptr, nullptr, err);
     uint8_t mid = 0, high = 0;
     Rc rs = ata_passthrough(fd, use16, {0xB0, 0xDA, 0, 0, 0x4F, 0xC2}, nullptr, &mid, &high, err);
+    uint8_t stlog[512] = {0};
+    std::string lerr;   // SMART READ LOG 06h (self-test log); optional, older drives may not have it
+    Rc rl = ata_passthrough(fd, use16, {0xB0, 0xD5, 1, 0x06, 0x4F, 0xC2}, stlog, nullptr, nullptr, lerr);
     ::close(fd);
+    if (rl == Rc::Ok) dump_raw(dev.name, "smart-selftest-log", stlog, sizeof stlog);
     dump_raw(dev.name, "identify", id, sizeof id);
     if (rd == Rc::Ok) dump_raw(dev.name, "smart-data", data, sizeof data);
     if (rt == Rc::Ok) dump_raw(dev.name, "smart-thresholds", thr, sizeof thr);
@@ -232,6 +236,7 @@ static ReadResult read_ata(const Device& dev) {
     std::optional<bool> passed = rs == Rc::Ok ? ata_status_from_lba(mid, high) : std::nullopt;
     r.ok = true;
     r.data = assemble(dev.name, "ATA", ident, ata_smart_json(data, rt == Rc::Ok ? thr : nullptr, passed), "sat");
+    if (rl == Rc::Ok) r.data["ata_smart_self_test_log"] = {{"standard", ata_selftest_log_json(stlog)}};
     if (!ata_checksum_ok(data)) r.data["_native_warning"] = "SMART data checksum mismatch";
     return r;
 }
@@ -266,7 +271,16 @@ static ReadResult read_nvme(const Device& dev) {
     g.cdw10 = ((sizeof log / 4 - 1) << 16) | 0x02;
     int rc2 = ioctl(fd, NVME_IOCTL_ADMIN_CMD, &g);
     int e2 = errno;
+    alignas(8) uint8_t stlog[564] = {0};
+    nvme_admin_cmd sl{};
+    sl.opcode = 0x02;   // GET LOG PAGE, LID 06h Device Self-test (optional: OACS bit 4)
+    sl.nsid = 0xFFFFFFFF;
+    sl.addr = reinterpret_cast<uintptr_t>(stlog);
+    sl.data_len = sizeof stlog;
+    sl.cdw10 = ((sizeof stlog / 4 - 1) << 16) | 0x06;
+    bool have_stlog = ioctl(fd, NVME_IOCTL_ADMIN_CMD, &sl) == 0;
     ::close(fd);
+    if (have_stlog) dump_raw(dev.name, "nvme-log06", stlog, sizeof stlog);
     if (rc2 != 0) {
         r.error = rc2 < 0 ? std::string("NVMe GET LOG PAGE: ") + std::strerror(e2) : "NVMe status " + std::to_string(rc2);
         r.permission_denied = rc2 < 0 && (e2 == EACCES || e2 == EPERM);
@@ -277,7 +291,64 @@ static ReadResult read_nvme(const Device& dev) {
     r.ok = true;
     r.method = "NVMe admin ioctl";
     r.data = assemble(dev.name, "NVMe", rc1 == 0 ? nvme_identify_json(id) : json::object(), nvme_health_json(log));
+    if (have_stlog) r.data["nvme_self_test_log"] = nvme_selftest_log_json(stlog);
     (void)e1;
+    return r;
+}
+
+SelfTestResult start_self_test(const Device& dev, const std::string& kind) {
+    SelfTestResult r;
+    int en = 0;
+    int fd = open_dev(dev.path, en);
+    if (fd < 0 && dev.protocol == "NVMe") fd = open_dev(dev.path + "n1", en);
+    if (fd < 0) {
+        r.error = "open " + dev.path + ": " + std::strerror(en);
+        r.permission_denied = en == EACCES || en == EPERM;
+        return r;
+    }
+    if (dev.protocol == "NVMe") {
+        auto code = nvme_selftest_code(kind);
+        if (!code) { ::close(fd); r.unsupported = true; r.error = "NVMe has no '" + kind + "' self-test"; return r; }
+        nvme_admin_cmd c{};
+        c.opcode = 0x14;   // Device Self-test
+        c.nsid = 0xFFFFFFFF;
+        c.cdw10 = *code;
+        int rc = ioctl(fd, NVME_IOCTL_ADMIN_CMD, &c);
+        int e = errno;
+        ::close(fd);
+        r.method = "NVMe admin ioctl (Device Self-test 14h)";
+        if (rc < 0) { r.error = std::string("NVMe ioctl: ") + std::strerror(e); r.permission_denied = e == EACCES || e == EPERM; return r; }
+        if (rc != 0) {
+            char b[64];
+            std::snprintf(b, sizeof b, "NVMe status 0x%x", rc);
+            r.error = b;
+            if ((rc & 0x7FF) == 0x01) { r.unsupported = true; r.error += " (Device Self-test not supported by this controller)"; }
+            if ((rc & 0x7FF) == 0x1D) r.error += " (a self-test is already in progress)";
+            return r;
+        }
+        r.ok = true;
+        return r;
+    }
+    auto sub = ata_selftest_subcommand(kind);
+    if (!sub) { ::close(fd); r.unsupported = true; r.error = "unknown self-test '" + kind + "'"; return r; }
+    std::string err;
+    Rc rc = ata_passthrough(fd, true, {0xB0, 0xD4, 0, *sub, 0x4F, 0xC2}, nullptr, nullptr, nullptr, err);
+    r.method = "SG_IO ATA PASS-THROUGH(16) SMART EXECUTE OFF-LINE IMMEDIATE";
+    if (rc == Rc::Unsupported || rc == Rc::Failed) {
+        std::string err12;
+        if (ata_passthrough(fd, false, {0xB0, 0xD4, 0, *sub, 0x4F, 0xC2}, nullptr, nullptr, nullptr, err12) == Rc::Ok) {
+            rc = Rc::Ok;
+            r.method = "SG_IO ATA PASS-THROUGH(12) SMART EXECUTE OFF-LINE IMMEDIATE";
+        }
+    }
+    ::close(fd);
+    if (rc != Rc::Ok) {
+        r.error = err;
+        r.permission_denied = rc == Rc::Denied;
+        r.unsupported = rc == Rc::Unsupported;
+        return r;
+    }
+    r.ok = true;
     return r;
 }
 

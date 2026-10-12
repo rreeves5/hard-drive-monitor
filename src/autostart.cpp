@@ -1,4 +1,5 @@
 #include "autostart.hpp"
+#include "osnative.hpp"
 
 #include <filesystem>
 
@@ -82,6 +83,21 @@ std::vector<std::string> windows_autostart_task_args(const std::string& exe) {
             "/RL", "HIGHEST", "/F"};
 }
 
+std::string windows_autostart_task_xml(const std::string& exe, const std::string& user) {
+    std::string user_xml = user.empty() ? "" : "<UserId>" + xml_escape(user) + "</UserId>";
+    return std::string("<?xml version=\"1.0\" encoding=\"UTF-16\"?>\n") +
+        "<Task version=\"1.2\" xmlns=\"http://schemas.microsoft.com/windows/2004/02/mit/task\">\n"
+        "  <RegistrationInfo><Description>Hard Drive Monitor tray app at logon. Turn off in the app's Settings.</Description></RegistrationInfo>\n"
+        "  <Triggers><LogonTrigger><Enabled>true</Enabled>" + user_xml + "</LogonTrigger></Triggers>\n"
+        "  <Principals><Principal id=\"Author\">" + user_xml +
+        "<LogonType>InteractiveToken</LogonType><RunLevel>HighestAvailable</RunLevel></Principal></Principals>\n"
+        "  <Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>"
+        "<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>"
+        "<ExecutionTimeLimit>PT0S</ExecutionTimeLimit><Enabled>true</Enabled></Settings>\n"
+        "  <Actions Context=\"Author\"><Exec><Command>" + xml_escape(exe) + "</Command></Exec></Actions>\n"
+        "</Task>\n";
+}
+
 std::string windows_run_value(const std::string& exe) { return "\"" + exe + "\""; }
 
 std::string autostart_path(OS os) {
@@ -131,7 +147,11 @@ static bool set_run_value(bool enable, const std::string& exe) {
     RegCloseKey(k);
     return rc == ERROR_SUCCESS;
 }
-static bool task_exists() { return run_cmd({"schtasks", "/Query", "/TN", AUTOSTART_TASK}, 30).rc == 0; }
+static bool task_exists() {
+    int e = osn::task_exists(AUTOSTART_TASK);   // native COM; schtasks only if COM could not answer
+    if (e >= 0) return e == 1;
+    return run_cmd({"schtasks", "/Query", "/TN", AUTOSTART_TASK}, 30).rc == 0;
+}
 #endif
 
 bool autostart_enabled() {
@@ -148,6 +168,8 @@ bool set_autostart(bool enable, const std::string& exe, std::string* err) {
     // GUI registers a logon task with highest privileges; a non-elevated one falls back to the Run key.
     if (!enable) {
         if (task_exists()) {
+            std::string cerr;
+            if (osn::task_delete(AUTOSTART_TASK, cerr)) { set_run_value(false, exe); return true; }
             auto r = run_cmd({"schtasks", "/Delete", "/TN", AUTOSTART_TASK, "/F"}, 30);
             if (r.rc != 0) { if (err) *err = trim(r.err.empty() ? r.out : r.err); return false; }
         }
@@ -155,6 +177,9 @@ bool set_autostart(bool enable, const std::string& exe, std::string* err) {
         return true;
     }
     if (is_windows_admin()) {
+        std::string uname = get_env("USERNAME"), dom = get_env("USERDOMAIN"), cerr;
+        std::string user = (!uname.empty() && !dom.empty()) ? dom + "\\" + uname : uname;
+        if (osn::task_register_xml(AUTOSTART_TASK, windows_autostart_task_xml(exe, user), cerr)) { set_run_value(false, exe); return true; }
         auto r = run_cmd(windows_autostart_task_args(exe), 30);
         if (r.rc == 0) { set_run_value(false, exe); return true; }
     }

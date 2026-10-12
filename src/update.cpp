@@ -208,6 +208,8 @@ UpdateHooks default_update_hooks() {
         ans = lower(trim(ans));
         return ans == "y" || ans == "yes";
     };
+    h.caps_get = [](const std::string& p) { return file_caps_get(p); };
+    h.caps_set = [](const std::string& p, const std::string& b, std::string& e) { return file_caps_set(p, b, e); };
     h.version_of = [](const std::string& exe) {
         auto r = run_cmd({exe, "--version"}, 30);
         return r.rc == 0 ? trim(r.out) : std::string();
@@ -399,6 +401,20 @@ InstallResult install_update(const ReleaseInfo& rel, UpdateFlavor flavor) {
             fs::permissions(tmp, fs::perms::owner_all | fs::perms::group_read | fs::perms::group_exec |
                                      fs::perms::others_read | fs::perms::others_exec,
                             fs::perm_options::replace, ec);
+            // setcap capabilities live on the old inode and vanish with it: copy them to the new file first.
+            std::string caps = H.caps_get ? H.caps_get(target.string()) : std::string();
+            if (!ec && !caps.empty()) {
+                std::string cerr;
+                if (H.caps_set && H.caps_set(tmp.string(), caps, cerr)) {
+                    res.log.push_back("re-applied the SMART capabilities (setcap) to the new binary");
+                } else {
+                    res.warnings.push_back(
+                        "WARNING: " + target.string() + " had SMART capabilities (setcap), and the new binary does not (" +
+                        cerr + "; setting them needs root). Background checks cannot read the drives until you run:\n"
+                        "  sudo setcap cap_sys_rawio,cap_sys_admin,cap_dac_read_search+ep " + target.string() +
+                        "\n(or run `sudo hdmon update` next time, which keeps them).");
+                }
+            }
             if (ec || !rename_ok(tmp, target, err)) {   // rename(2) within one directory is atomic
                 cleanup();
                 res.message = "cannot replace " + target.string() + ": " + (ec ? ec.message() : err) +
@@ -459,14 +475,8 @@ json scheduled_update_check(const json& cfg, const std::string& db_path, bool al
     if (c.ok) state["latest_tag"] = c.latest_tag;
     if (c.ok && c.update_available) {
         UpdateHooks& H = update_hooks();
-        if (truthy(jget(up, "auto_install"))) {
-            InstallResult ir = install_update(rel, flavor);
-            out["installed"] = ir.ok;
-            out["install_message"] = ir.message;
-            if (allow_notify && H.notify)
-                H.notify(ir.ok ? "Hard Drive Monitor updated" : "Hard Drive Monitor update failed",
-                         ir.ok ? ir.message : c.latest + " is available but could not be installed: " + ir.message);
-        } else if (jstr(state, "notified_tag").value_or("") != c.latest_tag) {
+        // Notify only: updates are never downloaded or installed automatically (manual `hdmon update`).
+        if (jstr(state, "notified_tag").value_or("") != c.latest_tag) {
             if (allow_notify && H.notify) {
                 auto [ok, info] = H.notify("Hard Drive Monitor update available",
                                            c.latest + " is out (you have " + std::string(VERSION) + "). " +

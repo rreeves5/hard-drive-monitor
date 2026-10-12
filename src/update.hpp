@@ -43,6 +43,9 @@ struct UpdateHooks {
     std::function<bool(const std::string& question)> confirm;    // default: [y/N] on stdin
     std::function<std::string(const std::string& exe)> version_of; // default: `exe --version`
     std::string self_path;                                          // default: the running executable
+    // Linux file capabilities of the binary being replaced (default: the security.capability xattr).
+    std::function<std::string(const std::string& path)> caps_get;
+    std::function<bool(const std::string& path, const std::string& blob, std::string& err)> caps_set;
 };
 UpdateHooks& update_hooks();          // process-wide (tests swap and restore it)
 UpdateHooks default_update_hooks();
@@ -68,13 +71,13 @@ CheckResult check_for_update(const std::string& current_version, ReleaseInfo* re
 
 // Download, verify SHA-256 against SHA256SUMS.txt, replace the binary (Windows: running hdmon.exe ->
 // hdmon.old.exe, new one moved in; POSIX: temp file in the same dir + chmod + atomic rename).
-struct InstallResult { bool ok = false; std::string message; std::vector<std::string> log; };
+struct InstallResult { bool ok = false; std::string message; std::vector<std::string> log, warnings; };
 InstallResult install_update(const ReleaseInfo& rel, UpdateFlavor flavor = UpdateFlavor::Cli);
 
 // Windows: delete hdmon.old.exe / hdmonw.old.exe left by a previous update (no-op elsewhere).
 void cleanup_old_binaries();
 
-// ---- scheduled-check integration ([update] auto_check / auto_install, both default false)
+// ---- scheduled-check integration ([update] auto_check, default false; notify only, never installs)
 // update-state.json (CLI) / update-state-gui.json (GUI) next to the history DB
 std::string update_state_path(const std::string& db_path, UpdateFlavor flavor = UpdateFlavor::Cli);
 // Called by `hdmon check`/`watch`. Does nothing (and never touches the network) unless

@@ -254,6 +254,8 @@ ReadResult read_device(const Device& dev) {
     bool have_thr = (*smart)->SMARTReadDataThresholds(smart, &thr) == kIOReturnSuccess;
     Boolean exceeded = false;
     bool have_status = (*smart)->SMARTReturnStatus(smart, &exceeded) == kIOReturnSuccess;
+    uint8_t stlog[512] = {0};
+    bool have_log = (*smart)->SMARTReadLogAtAddress(smart, 0x06, stlog, sizeof stlog) == kIOReturnSuccess;
     (*smart)->Release(smart);
     IODestroyPlugInInterface(plugin);
     if (dr != kIOReturnSuccess) { r.error = "SMARTReadData failed"; return r; }
@@ -264,6 +266,40 @@ ReadResult read_device(const Device& dev) {
     r.data = assemble(dev.name, "ATA", ident,
                       ata_smart_json(reinterpret_cast<const uint8_t*>(&data), have_thr ? reinterpret_cast<const uint8_t*>(&thr) : nullptr,
                                      have_status ? std::optional<bool>(!exceeded) : std::nullopt));
+    if (have_log) r.data["ata_smart_self_test_log"] = {{"standard", ata_selftest_log_json(stlog)}};
+    return r;
+}
+
+SelfTestResult start_self_test(const Device& dev, const std::string& kind) {
+    SelfTestResult r;
+    Obj media(media_for_bsd(dev.path));
+    if (!media.o) { r.error = "no IOMedia for " + dev.path; return r; }
+    bool nvme = false;
+    Obj se(smart_entry(media.o, nvme));
+    if (!se.o) { r.unsupported = true; r.error = "no SMART user client for this device"; return r; }
+    if (nvme) { r.unsupported = true; r.error = "macOS IONVMeSMARTInterface has no self-test call"; return r; }
+    if (kind != "short" && kind != "long" && kind != "extended") {
+        r.unsupported = true;
+        r.error = "IOATASMARTInterface only starts short and extended self-tests";
+        return r;
+    }
+    IOCFPlugInInterface** plugin = nullptr;
+    SInt32 score = 0;
+    IOReturn kr = IOCreatePlugInInterfaceForService(se.o, kIOATASMARTUserClientTypeID, kIOCFPlugInInterfaceID, &plugin, &score);
+    if (kr != kIOReturnSuccess || !plugin) {
+        r.error = "IOCreatePlugInInterfaceForService failed";
+        r.permission_denied = kr == kIOReturnNotPermitted || kr == kIOReturnNotPrivileged;
+        return r;
+    }
+    IOATASMARTInterface** smart = nullptr;
+    (*plugin)->QueryInterface(plugin, CFUUIDGetUUIDBytes(kIOATASMARTInterfaceID), reinterpret_cast<LPVOID*>(&smart));
+    if (!smart) { IODestroyPlugInInterface(plugin); r.error = "IOATASMARTInterface not available"; return r; }
+    IOReturn er = (*smart)->SMARTExecuteOffLineImmediate(smart, kind != "short");
+    (*smart)->Release(smart);
+    IODestroyPlugInInterface(plugin);
+    r.method = "IOKit IOATASMARTInterface SMARTExecuteOffLineImmediate";
+    if (er != kIOReturnSuccess) { r.error = "SMARTExecuteOffLineImmediate failed"; return r; }
+    r.ok = true;
     return r;
 }
 

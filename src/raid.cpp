@@ -88,6 +88,37 @@ std::string state_text(const RaidArray& a) {
     return s;
 }
 
+std::string state_label(const RaidArray& a, const std::vector<Result>& results, bool brief) {
+    if (a.state != "UNKNOWN") return state_text(a);
+    std::string worst;
+    for (auto& m : a.members) {
+        const Result* r = member_result(m, results);
+        if (!r) continue;
+        std::string st = member_status(m, r);
+        if (worst.empty() || roll_rank(st) > roll_rank(worst)) worst = st;
+    }
+    if (worst.empty()) return brief ? "State unknown" : "State unknown (controller state not readable)";
+    std::string w = worst == "OK" ? "OK" : worst == "WARNING" ? "Warning" : worst == "CRITICAL" ? "Critical" : "unknown";
+    return "Worst disk " + w + (brief ? "" : " (controller state not readable)");
+}
+
+std::string member_status(const ArrayMember& m, const Result* r) {
+    std::string smart = r ? r->second.status : "UNKNOWN";
+    if (m.role == "failed" || m.role == "missing") return "CRITICAL";
+    if (m.role == "rebuilding") return roll_rank(smart) > roll_rank("WARNING") ? smart : "WARNING";
+    if (m.role == "spare") return r && smart != "UNKNOWN" ? smart : "OK";
+    return smart;
+}
+
+std::string member_role_text(const ArrayMember& m) {
+    if (m.role == "failed") return "Failed (removed from array)";
+    if (m.role == "missing") return "Missing from array";
+    if (m.role == "rebuilding") return "Rebuilding";
+    if (m.role == "spare") return "Spare";
+    if (m.role == "journal") return "Journal";
+    return "";
+}
+
 std::string backend_label(const std::string& b) {
     static const std::map<std::string, std::string> L = {
         {"mdadm", "Linux md"}, {"storage-spaces", "Storage Spaces"}, {"intel-rst", "Intel RST"},
@@ -567,6 +598,76 @@ std::vector<RaidArray> parse_appleraid(const std::string& text) {
             if (std::regex_search(a.raw_state, pm, pctre)) a.rebuild_pct = std::stod(pm[1]);
         }
         a.source = "diskutil appleRAID";
+    }
+    return out;
+}
+
+// ------------------------------------------------------------------ macOS AppleRAID via the IOKit registry
+std::vector<RaidArray> parse_appleraid_ioreg(const json& snap) {
+    std::vector<RaidArray> out;
+    const json& sets = jget(snap, "sets");
+    const json& members = jget(snap, "members");
+    if (!sets.is_array()) return out;
+    const std::string MISSING_UUID = "FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF", DELETED_UUID = "00000000-0000-0000-0000-000000000000";
+    for (auto& st : sets) {
+        RaidArray a;
+        a.backend = "appleraid";
+        std::string uuid = jstr(st, "AppleRAID-SetUUID").value_or("");
+        a.name = jstr(st, "AppleRAID-SetName").value_or(uuid);
+        a.id = "appleraid:" + (uuid.empty() ? a.name : uuid);
+        a.level = jstr(st, "AppleRAID-LevelName").value_or("");
+        a.raw_state = jstr(st, "AppleRAID-SetStatus").value_or("");
+        if (auto sz = jint(st, "_size")) a.size_bytes = *sz;
+        if (auto b = jstr(st, "_bsd"); b && !b->empty()) a.volumes.push_back("/dev/" + *b);
+        if (truthy(jget(st, "AppleRAID-AutoRebuild"))) a.notes.push_back("rebuild: automatic");
+        std::vector<std::string> spares;
+        if (jget(st, "AppleRAID-Spares").is_array()) for (auto& x : jget(st, "AppleRAID-Spares")) spares.push_back(to_str(x));
+        // Members the kernel has attached, by UUID.
+        std::map<std::string, const json*> live;
+        if (members.is_array())
+            for (auto& m : members)
+                if (jstr(m, "AppleRAID-SetUUID").value_or("") == uuid) live[jstr(m, "AppleRAID-MemberUUID").value_or("")] = &m;
+        auto add = [&](const std::string& muuid, int idx, bool spare_slot) {
+            if (muuid == DELETED_UUID) return;
+            ArrayMember am;
+            am.serial = std::nullopt;
+            if (!spare_slot) am.slot = idx;
+            auto it = live.find(muuid);
+            if (muuid == MISSING_UUID || it == live.end()) {
+                am.role = spare_slot ? "spare" : "missing";   // an absent spare does not hurt the array
+                am.state_text = spare_slot ? "Spare (not attached)" : "Missing";
+                a.members.push_back(am);
+                return;
+            }
+            const json& m = *it->second;
+            if (auto b = jstr(m, "_bsd"); b && !b->empty()) am.device = "/dev/" + *b;
+            if (auto sz = jint(m, "_size")) am.size_bytes = *sz;
+            if (auto i = jint(m, "AppleRAID-MemberIndex"); i && !spare_slot) am.slot = static_cast<int>(*i);
+            am.state_text = jstr(m, "AppleRAID-MemberStatus").value_or(spare_slot ? "Standby" : "");
+            std::string s = lower(am.state_text);
+            if (s == "rebuilding") {
+                am.role = "rebuilding";
+                auto done = jint(m, "AppleRAID-Rebuild-Progress");
+                if (done && am.size_bytes && *am.size_bytes > 0) a.rebuild_pct = 100.0 * static_cast<double>(*done) / static_cast<double>(*am.size_bytes);
+            } else if (s == "standby" || spare_slot) am.role = "spare";
+            else if (s == "failed") am.role = "failed";
+            else if (s == "missing" || s == "offline") am.role = "missing";
+            else am.role = "active";
+            a.members.push_back(am);
+        };
+        int idx = 0;
+        if (jget(st, "AppleRAID-Members").is_array())
+            for (auto& x : jget(st, "AppleRAID-Members")) add(to_str(x), idx++, false);
+        for (auto& sp : spares) add(sp, 0, true);
+        std::string s = lower(a.raw_state);
+        bool rebuilding = std::any_of(a.members.begin(), a.members.end(), [](const ArrayMember& m) { return m.role == "rebuilding"; });
+        if (s == "offline" || s == "failed") a.state = "FAILED";
+        else if (rebuilding) a.state = "REBUILDING";
+        else if (s == "degraded") a.state = "DEGRADED";
+        else if (s == "online") a.state = "OK";
+        else a.state = "UNKNOWN";
+        a.source = "IOKit AppleRAID";
+        out.push_back(a);
     }
     return out;
 }

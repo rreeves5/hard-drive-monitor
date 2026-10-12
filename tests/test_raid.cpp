@@ -192,6 +192,38 @@ TEST_CASE("macOS AppleRAID: degraded mirror rebuilding 45%, online stripe") {
     CHECK(s.members.size() == 2);
 }
 
+TEST_CASE("macOS AppleRAID from the IOKit registry: rebuilding mirror, missing slot, spare, online stripe") {
+    auto v = parse_appleraid_ioreg(th::load("raid/ioreg-appleraid.json"));
+    REQUIRE(v.size() == 2);
+    auto& b = by_name(v, "Backup");
+    CHECK(b.backend == "appleraid");
+    CHECK(b.id == "appleraid:8E3A8C3D-5B1F-4C7A-9F2E-1D6B0A4C7E21");
+    CHECK(b.level == "Mirror");
+    CHECK(b.state == "REBUILDING");
+    CHECK(b.source == "IOKit AppleRAID");
+    REQUIRE(b.rebuild_pct);
+    CHECK(*b.rebuild_pct == doctest::Approx(45.0).epsilon(0.001));
+    CHECK(b.volumes == std::vector<std::string>{"/dev/disk6"});
+    REQUIRE(b.members.size() == 4);
+    CHECK(b.members[0].device == "/dev/disk4s2");
+    CHECK(b.members[0].role == "active");
+    CHECK(b.members[1].role == "rebuilding");
+    CHECK(b.members[2].role == "missing");
+    CHECK(b.members[2].device.empty());
+    CHECK(b.members[3].role == "spare");
+    CHECK(b.members[3].device == "/dev/disk10s2");
+    CHECK(member_status(b.members[2], nullptr) == "CRITICAL");
+    CHECK(member_status(b.members[3], nullptr) == "OK");
+    auto& s = by_name(v, "Scratch");
+    CHECK(s.state == "OK");
+    CHECK(s.members.size() == 2);
+    CHECK(s.size_bytes == std::optional<int64_t>(1000070512640));
+    // same arrays as the diskutil text fallback, by id
+    auto d = parse_appleraid(rtext("diskutil-appleraid.txt"));
+    CHECK(by_name(d, "Backup").id == b.id);
+    CHECK(parse_appleraid_ioreg(json::object()).empty());
+}
+
 TEST_CASE("Intel RST CLI: degraded volume with a failed member") {
     auto v = parse_rstcli(rtext("rstcli-volume.txt"));
     REQUIRE(v.size() == 1);
@@ -361,5 +393,64 @@ TEST_CASE("CLI: status, raid and JSON on the RAID sample") {
     auto none = th::run({"raid", "--from-json", th::fix("hdd_healthy.json"), "--color", "never"});
     CHECK(none.rc == 0);
     CHECK(th::has(none.out, "No RAID arrays"));
+}
+
+TEST_CASE("member status: role wins over SMART when it is worse") {
+    Result ok = drive_result("/dev/sdb", "S1", "OK"), crit = drive_result("/dev/sdc", "S2", "CRITICAL", 10),
+           warn = drive_result("/dev/sdd", "S3", "WARNING", 70);
+    ArrayMember m;
+    m.role = "failed";
+    CHECK(member_status(m, &ok) == "CRITICAL");
+    CHECK(member_status(m, nullptr) == "CRITICAL");
+    CHECK(member_role_text(m) == "Failed (removed from array)");
+    m.role = "missing";
+    CHECK(member_status(m, nullptr) == "CRITICAL");
+    CHECK(member_role_text(m) == "Missing from array");
+    m.role = "rebuilding";
+    CHECK(member_status(m, &ok) == "WARNING");
+    CHECK(member_status(m, &crit) == "CRITICAL");
+    CHECK(member_role_text(m) == "Rebuilding");
+    m.role = "spare";
+    CHECK(member_status(m, &ok) == "OK");
+    CHECK(member_status(m, nullptr) == "OK");
+    CHECK(member_status(m, &warn) == "WARNING");
+    CHECK(member_role_text(m) == "Spare");
+    m.role = "active";
+    CHECK(member_status(m, &warn) == "WARNING");
+    CHECK(member_status(m, nullptr) == "UNKNOWN");
+    CHECK(member_role_text(m).empty());
+}
+
+TEST_CASE("state label: unreadable controller state is rolled up from the disks and said honestly") {
+    std::vector<Result> rs = {drive_result("/dev/sdb", "S1", "OK"), drive_result("/dev/sdc", "S2", "WARNING", 80)};
+    RaidArray a;
+    a.name = "MegaRAID bus/0";
+    a.backend = "megaraid";
+    a.state = "UNKNOWN";
+    ArrayMember m1, m2;
+    m1.drive_key = rs[0].first.key();
+    m2.drive_key = rs[1].first.key();
+    a.members = {m1};
+    CHECK(state_label(a, rs) == "Worst disk OK (controller state not readable)");
+    CHECK(state_label(a, rs, true) == "Worst disk OK");
+    a.members = {m1, m2};
+    CHECK(state_label(a, rs) == "Worst disk Warning (controller state not readable)");
+    CHECK(array_status(a, rs) == "WARNING");
+    a.members.clear();
+    CHECK(state_label(a, rs) == "State unknown (controller state not readable)");
+    a.state = "DEGRADED";
+    CHECK(state_label(a, rs) == "Degraded");
+}
+
+TEST_CASE("CLI: failed member shows CRITICAL with its role, controller label is honest") {
+    auto r = th::run({"raid", "--from-json", th::fix("raid/sample"), "--color", "never"});
+    CHECK(th::has(r.out, "Failed (removed from array)  CRITICAL"));
+    CHECK(th::has(r.out, "Worst disk OK (controller state not readable)"));
+    auto s = th::run({"status", "--from-json", th::fix("raid/sample"), "--color", "never"});
+    CHECK(th::has(s.out, "member /dev/sdd1: Failed (removed from array)"));
+    bool failed_row_critical = false;
+    for (auto& line : split_lines(s.out))
+        if (th::has(line, "sdd (failed)")) failed_row_critical = th::has(line, "CRITICAL");
+    CHECK(failed_row_critical);
 }
 }

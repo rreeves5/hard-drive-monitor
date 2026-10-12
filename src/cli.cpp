@@ -1,6 +1,7 @@
 #include "cli.hpp"
 
 #include <chrono>
+#include <functional>
 #include <ctime>
 #include <map>
 #include <set>
@@ -9,6 +10,7 @@
 
 #include "alerts.hpp"
 #include "collect.hpp"
+#include "native_smart.hpp"
 #include "config.hpp"
 #include "render.hpp"
 #include "service.hpp"
@@ -79,7 +81,7 @@ std::map<std::string, CmdSpec> specs() {
                    "  --check        only report whether a newer release exists (exit 0 = up to date, 1 = update available)\n"
                    "  -y, --yes      install without asking for confirmation\n"
                    "  --enable-auto-check   set [update] auto_check = true: the scheduled check looks once a day and notifies\n"
-                   "  --disable-auto-check  set [update] auto_check = false and auto_install = false (the default)\n"};
+                   "  --disable-auto-check  set [update] auto_check = false (the default)\n"};
     return s;
 }
 
@@ -397,6 +399,43 @@ int print_selftest(Ctx& c, const Drive& d) {
     return 0;
 }
 
+// Shared by the native and smartctl paths: refuses when a test is running, prints the expected duration, starts
+// the test through `start` and reports. Returns -1 (nothing printed) when start failed and a fallback may try.
+int start_selftest_with(Ctx& c, const Drive& d, const std::string& name, const std::string& kind,
+                        const std::function<bool(std::string&)>& start, std::string& fail_info, bool last_resort = false) {
+    const json& st = d.self_test;
+    if (truthy(jget(st, "in_progress"))) {
+        std::string msg = "A self-test is already running on " + name + " (" + to_str(jget(st, "remaining_percent")) +
+                          "% remaining). Abort it with: smartctl -X " + name;
+        c.out << (c.a.has("--json") ? dump({{"started", false}, {"reason", msg}}) : msg) << "\n";
+        return 1;
+    }
+    auto minutes = jint(st, kind == "short" ? "short_minutes" : "extended_minutes");
+    std::string expected;
+    if (minutes && *minutes) {
+        expected = "about " + std::to_string(*minutes) + " minute(s)" +
+                   (*minutes >= 90 ? " (~" + fmt_fixed(static_cast<double>(*minutes) / 60.0, 1) + " h)" : "");
+    } else if (d.kind == "NVMe" && kind == "short") {
+        expected = "up to 2 minutes (NVMe spec limit)";
+    } else {
+        expected = "unknown - the drive did not report it (NVMe extended tests are typically 10-90 min)";
+    }
+    std::string info;
+    bool ok = start(info);
+    if (!ok && !last_resort) { fail_info = info; return -1; }
+    if (c.a.has("--json")) {
+        c.out << dump({{"started", ok}, {"device", name}, {"kind", kind}, {"expected_duration", expected},
+                       {"expected_minutes", minutes ? json(*minutes) : json()}, {"method", info}}) << "\n";
+    } else if (ok) {
+        c.out << "Started " << kind << " self-test on " << name << " (" << d.model.value_or("") << "). Expected duration: "
+              << expected << ".\nThe drive stays usable meanwhile (it may be slower). Check later with:\n  hdmon selftest "
+              << c.a.pos[0] << " --results\n";
+    } else {
+        c.err << "Self-test did not start on " << name << ": " << info << "\n";
+    }
+    return ok ? 0 : 1;
+}
+
 int cmd_selftest(Ctx& c) {
     std::string dev = c.a.pos[0];
     std::string kind = c.a.pos.size() > 1 ? c.a.pos[1] : "short";
@@ -409,9 +448,36 @@ int cmd_selftest(Ctx& c) {
         if (!hit) { c.err << "hdmon: no drive matching '" << dev << "'\n"; return 3; }
         return print_selftest(c, hit->first);
     }
-    auto path = find_smartctl(jstr(jget(c.cfg, "smartctl"), "path").value_or(""));
+    // Native first: find the drive with the OS backend, read its SMART (duration, test already running) and start
+    // the test with SMART EXECUTE OFF-LINE IMMEDIATE / NVMe Device Self-test. smartctl only as a fallback.
+    std::string source = smart_source(c.cfg);
+    std::optional<native::Device> ndev;
+    if (source != "smartctl")
+        for (auto& nd : native::list_devices())
+            if (dev == nd.name || dev == nd.path || dev == nd.name.substr(nd.name.rfind('/') + 1)) { ndev = nd; break; }
+    std::string native_err;
+    if (ndev) {
+        native::ReadResult rr = native::read_device(*ndev);
+        if (rr.ok) {
+            Drive d = native::to_drive(*ndev, rr);
+            if (results_only) return print_selftest(c, d);
+            int rc = start_selftest_with(c, d, ndev->name, kind, [&](std::string& info) {
+                auto st = native::start_self_test(*ndev, kind);
+                info = st.ok ? st.method : st.error + (st.method.empty() ? "" : " [" + st.method + "]");
+                return st.ok;
+            }, native_err);
+            if (rc >= 0) return rc;
+        } else {
+            native_err = rr.error;
+        }
+    }
+    auto path = source == "native" ? std::nullopt : find_smartctl(jstr(jget(c.cfg, "smartctl"), "path").value_or(""));
     if (!path) {
-        c.err << "smartctl (smartmontools) is needed for self-tests. Install it with:\n  " << install_hint() << "\n";
+        if (!native_err.empty()) c.err << "hdmon: native self-test on " << dev << " failed: " << native_err << "\n";
+        else if (!ndev) c.err << "hdmon: no drive matching '" << dev << "'\n";
+        if (source != "native")
+            c.err << "smartctl (smartmontools) is the fallback for drives the native backend cannot reach. Install it with:\n  "
+                  << install_hint() << "\n";
         return 3;
     }
     json sudo = jget(jget(c.cfg, "smartctl"), "sudo");
@@ -430,43 +496,22 @@ int cmd_selftest(Ctx& c) {
         c.err << "hdmon: cannot read SMART on " << ref->name << ": " << join(d.notes, "; ") << "\n";
         return 3;
     }
-    const json& st = d.self_test;
-    if (truthy(jget(st, "in_progress"))) {
-        std::string msg = "A self-test is already running on " + ref->name + " (" + to_str(jget(st, "remaining_percent")) +
-                          "% remaining). Abort it with: smartctl -X " + ref->name;
-        c.out << (c.a.has("--json") ? dump({{"started", false}, {"reason", msg}}) : msg) << "\n";
-        return 1;
-    }
-    auto minutes = jint(st, kind == "short" ? "short_minutes" : "extended_minutes");
-    std::string expected;
-    if (minutes && *minutes) {
-        expected = "about " + std::to_string(*minutes) + " minute(s)" +
-                   (*minutes >= 90 ? " (~" + fmt_fixed(static_cast<double>(*minutes) / 60.0, 1) + " h)" : "");
-    } else if (d.kind == "NVMe" && kind == "short") {
-        expected = "up to 2 minutes (NVMe spec limit)";
-    } else {
-        expected = "unknown - the drive did not report it (NVMe extended tests are typically 10-90 min)";
-    }
-    std::vector<std::string> cmd = {"-t", kind, "--json"};
-    if (ref->dev_type) { cmd.push_back("-d"); cmd.push_back(*ref->dev_type); }
-    cmd.push_back(ref->name);
-    json data;
-    std::string errs;
-    int rc = sc.run(cmd, data, errs, 60);
-    bool ok = !(rc & 0x07);
-    std::string info = messages_text(data);
-    if (info.empty()) info = trim(errs);
-    if (c.a.has("--json")) {
-        c.out << dump({{"started", ok}, {"device", ref->name}, {"kind", kind}, {"expected_duration", expected},
-                       {"expected_minutes", minutes ? json(*minutes) : json()}, {"smartctl_exit", rc}, {"message", info}}) << "\n";
-    } else if (ok) {
-        c.out << "Started " << kind << " self-test on " << ref->name << " (" << d.model.value_or("") << "). Expected duration: "
-              << expected << ".\nThe drive stays usable meanwhile (it may be slower). Check later with:\n  hdmon selftest "
-              << dev << " --results\n";
-    } else {
-        c.err << "Self-test did not start on " << ref->name << " (smartctl exit " << rc << "): " << info << "\n";
-    }
-    return ok ? 0 : 1;
+    std::string unused;
+    int smartctl_rc = 0;
+    int rc = start_selftest_with(c, d, ref->name, kind, [&](std::string& info) {
+        std::vector<std::string> cmd = {"-t", kind, "--json"};
+        if (ref->dev_type) { cmd.push_back("-d"); cmd.push_back(*ref->dev_type); }
+        cmd.push_back(ref->name);
+        json data;
+        std::string errs;
+        smartctl_rc = sc.run(cmd, data, errs, 60);
+        info = messages_text(data);
+        if (info.empty()) info = trim(errs);
+        if (!native_err.empty()) info += (info.empty() ? "" : "; ") + std::string("native attempt: ") + native_err;
+        info = "smartctl" + std::string(info.empty() ? "" : ": " + info);
+        return !(smartctl_rc & 0x07);
+    }, unused, true);
+    return rc < 0 ? 1 : rc;
 }
 
 int cmd_install(Ctx& c) {
@@ -528,11 +573,9 @@ int cmd_update(Ctx& c) {
         bool on = c.a.has("--enable-auto-check");
         std::string path = c.a.get("--config", config_path()), e;
         bool ok = set_config_value(path, "update", "auto_check", on ? "true" : "false", &e);
-        if (ok && !on) ok = set_config_value(path, "update", "auto_install", "false", &e);
         if (js) c.out << dump({{"ok", ok}, {"config", path}, {"auto_check", on}, {"error", ok ? json() : json(e)}}) << "\n";
-        else if (ok) c.out << (on ? "Automatic update checks ON (once a day, notify only; nothing is installed unless "
-                                    "auto_install = true): "
-                                  : "Automatic update checks and installs OFF: ") << path << "\n";
+        else if (ok) c.out << (on ? "Automatic update checks ON (once a day, notify only; install with `hdmon update`): "
+                                  : "Automatic update checks OFF: ") << path << "\n";
         else c.err << "hdmon: " << e << "\n";
         return ok ? 0 : 3;
     }
@@ -568,10 +611,12 @@ int cmd_update(Ctx& c) {
     }
     InstallResult ir = install_update(rel);
     if (js) {
-        c.out << dump({{"check", r.to_json()}, {"installed", ir.ok}, {"message", ir.message}, {"log", ir.log}}) << "\n";
+        c.out << dump({{"check", r.to_json()}, {"installed", ir.ok}, {"message", ir.message}, {"log", ir.log},
+                       {"warnings", ir.warnings}}) << "\n";
     } else {
         for (auto& l : ir.log) c.out << "  " << l << "\n";
         (ir.ok ? c.out : c.err) << (ir.ok ? "" : "hdmon: update failed: ") << ir.message << "\n";
+        for (auto& w : ir.warnings) c.err << w << "\n";
     }
     return ir.ok ? 0 : 3;
 }

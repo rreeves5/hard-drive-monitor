@@ -141,20 +141,22 @@ static void array_rows(const RaidArray& ar, const std::vector<Result>& all, std:
     std::string model = lvl + " · " + backend_label(ar.backend);
     if (u8len(model) > 26) model = u8substr(model, 25) + "…";
     rows.push_back({{ar.name, "bold"}, {model, ""}, {"-", "dim"}, {"RAID", ""}, {fmt_size(ar.size_bytes), ""}, {"-", ""},
-                    {"-", ""}, {"-", ""}, {state_text(ar), state_color(ar.state)}, {"-", ""}, {st, status_color(st)}});
+                    {"-", ""}, {"-", ""}, {state_label(ar, all, true), ar.state == "UNKNOWN" ? status_color(st) : state_color(ar.state)},
+                    {"-", ""}, {st, status_color(st)}});
     for (size_t i = 0; i < ar.members.size(); ++i) {
         const ArrayMember& m = ar.members[i];
         std::string branch = i + 1 == ar.members.size() ? "  └ " : "  ├ ";
         std::string role = m.role == "active" ? "" : " (" + m.role + ")";
         const Result* r = member_result(m, all);
         if (r) {
-            rows.push_back(drive_cells(r->first, r->second, branch + disk_label(r->first) + role));
+            Assessment as = r->second;
+            as.status = member_status(m, r);   // a failed member is CRITICAL whatever its SMART says
+            rows.push_back(drive_cells(r->first, as, branch + disk_label(r->first) + role));
         } else {
             std::string dev = m.device.empty() ? "(missing)" : (starts_with(m.device, "/dev/") ? m.device.substr(5) : m.device);
             rows.push_back({{branch + dev + role, "cyan"}, {"no SMART data", "dim"}, {m.serial.value_or("-"), "dim"}, {"-", ""},
                             {fmt_size(m.size_bytes), ""}, {"-", ""}, {"-", ""}, {"-", ""}, {"n/a", ""}, {"n/a", ""},
-                            {m.role == "failed" || m.role == "missing" ? "FAILED" : "UNKNOWN",
-                             m.role == "failed" || m.role == "missing" ? "red" : "dim"}});
+                            {member_status(m, nullptr), status_color(member_status(m, nullptr))}});
         }
     }
 }
@@ -200,13 +202,17 @@ std::string status_view(std::vector<Result> results, const Painter& paint, const
                 if (truthy(jget(c, "alert")))
                     lines.push_back("   " + paint("▲ array " + to_str(c["event"]) + ": " + (c["old"].is_null() ? std::string("first seen") : to_str(c["old"])) +
                                                   " -> " + to_str(c["new"]), "red"));
-        if (ar.state != "OK") lines.push_back("   " + paint(ar.state == "FAILED" ? "✖" : (ar.state == "UNKNOWN" ? "·" : "!"), state_color(ar.state)) +
+        if (ar.state != "OK" && ar.state != "UNKNOWN") lines.push_back("   " + paint(ar.state == "FAILED" ? "✖" : (ar.state == "UNKNOWN" ? "·" : "!"), state_color(ar.state)) +
                                               " " + state_text(ar) + (ar.raw_state.empty() ? "" : " (" + ar.raw_state + ")"));
         for (auto& m : ar.members)
             if (m.role == "failed" || m.role == "missing" || m.role == "rebuilding")
                 lines.push_back("   " + paint(m.role == "rebuilding" ? "!" : "✖", m.role == "rebuilding" ? "yellow" : "red") + " member " +
-                                (m.device.empty() ? std::string("(slot ") + (m.slot ? std::to_string(*m.slot) : "?") + ")" : m.device) + " " + m.role);
-        if (ar.state == "UNKNOWN") for (auto& n : ar.notes) lines.push_back("   · " + n);
+                                (m.device.empty() ? std::string("(slot ") + (m.slot ? std::to_string(*m.slot) : "?") + ")" : m.device) + ": " +
+                                member_role_text(m));
+        if (ar.state == "UNKNOWN") {
+            lines.push_back("   · " + state_label(ar, all));
+            for (auto& n : ar.notes) lines.push_back("   · " + n);
+        }
         if (lines.empty()) continue;
         details.push_back(paint(ar.name, "bold") + paint("  " + st, status_color(st)));
         details.insert(details.end(), lines.begin(), lines.end());
@@ -264,7 +270,8 @@ std::string raid_view(const std::vector<RaidArray>& arrays, const std::vector<Re
     std::vector<std::string> L;
     for (auto& a : arrays) {
         std::string st = array_status(a, results);
-        L.push_back(paint(a.name, "bold") + "  " + paint(st, status_color(st)) + "  " + paint(state_text(a), state_color(a.state)));
+        L.push_back(paint(a.name, "bold") + "  " + paint(st, status_color(st)) + "  " +
+                    paint(state_label(a, results), a.state == "UNKNOWN" ? status_color(st) : state_color(a.state)));
         std::vector<std::pair<std::string, std::string>> kv = {
             {"Type", (a.level.empty() ? std::string("RAID") : a.level)}, {"Backend", backend_label(a.backend)},
             {"State", a.raw_state}, {"Size", fmt_size(a.size_bytes)}, {"Volumes", join(a.volumes, " ")}, {"Id", a.id}, {"Source", a.source}};
@@ -273,11 +280,14 @@ std::string raid_view(const std::vector<RaidArray>& arrays, const std::vector<Re
         for (auto& m : a.members) {
             const Result* r = member_result(m, results);
             std::string dev = r ? (r->first.dev_type && is_raid_dev_type(*r->first.dev_type) ? disk_label(r->first) : device_label(r->first)) : (m.device.empty() ? std::string("(missing)") : m.device);
-            std::string info = r ? r->first.model.value_or("") + "  " + paint(r->second.status, status_color(r->second.status)) +
-                                       (r->second.health ? " " + std::to_string(*r->second.health) + "%" : "")
-                                 : paint("no SMART data", "dim");
-            std::string role = m.role == "active" ? m.role : paint(m.role, m.role == "spare" || m.role == "journal" ? "" : "red");
-            L.push_back("    " + ljust(m.slot ? "#" + std::to_string(*m.slot) : "", 4) + ljust(dev, 22) + " " + ljust(role, 11) + " " + info);
+            std::string ms = member_status(m, r);
+            std::string info = paint(ms, status_color(ms)) + "  " +
+                               (r ? r->first.model.value_or("") + "  SMART " + r->second.status +
+                                        (r->second.health ? " " + std::to_string(*r->second.health) + "%" : "")
+                                  : paint("no SMART data", "dim"));
+            std::string rt = member_role_text(m);
+            std::string role = rt.empty() ? m.role : paint(rt, status_color(ms));
+            L.push_back("    " + ljust(m.slot ? "#" + std::to_string(*m.slot) : "", 4) + ljust(dev, 22) + " " + ljust(role, 28) + " " + info);
         }
         for (auto& n : a.notes) L.push_back("  " + paint("· " + n, "dim"));
         L.push_back("");

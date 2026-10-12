@@ -117,10 +117,10 @@ public:
         auto* nb = new wxNotebook(this, wxID_ANY);
         auto* page = new wxPanel(nb);
         auto* ps = new wxBoxSizer(wxVERTICAL);
-        auto* lv = new wxListCtrl(page, wxID_ANY, wxDefaultPosition, FromDIP(wxSize(560, 270)),
+        auto* lv = new wxListCtrl(page, wxID_ANY, wxDefaultPosition, FromDIP(wxSize(660, 270)),
                                   wxLC_REPORT | wxLC_NO_HEADER | wxLC_SINGLE_SEL);
         lv->AppendColumn("", wxLIST_FORMAT_LEFT, FromDIP(210));
-        lv->AppendColumn("", wxLIST_FORMAT_LEFT, FromDIP(340));
+        lv->AppendColumn("", wxLIST_FORMAT_LEFT, FromDIP(440));
         long i = 0;
         std::string notes;
         for (auto& [k, v] : rows) {
@@ -145,7 +145,7 @@ public:
         SetAffirmativeId(wxID_OK);
         SetEscapeId(wxID_OK);
         SetSizerAndFit(top);
-        SetSize(FromDIP(wxSize(640, 500)));
+        SetSize(FromDIP(wxSize(740, 500)));
         CentreOnScreen();
     }
 };
@@ -256,12 +256,7 @@ public:
         wxWindow* bp = box->GetStaticBox();
         check_ = new wxCheckBox(bp, wxID_ANY, "Check for updates automatically (once a day)");
         check_->SetValue(s.auto_check);
-        install_ = new wxCheckBox(bp, wxID_ANY, "Install updates automatically");
-        install_->SetValue(s.auto_install);
-        install_->Enable(s.auto_check);
-        check_->Bind(wxEVT_CHECKBOX, [this](wxCommandEvent&) { install_->Enable(check_->GetValue()); });
         box->Add(check_, 0, wxALL, FromDIP(6));
-        box->Add(install_, 0, wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(6));
         auto* crow = new wxBoxSizer(wxHORIZONTAL);
         auto* now = new wxButton(bp, wxID_ANY, "Check now");
         status_ = new wxStaticText(bp, wxID_ANY, U(std::string("You have ") + GUI_VERSION + "."));
@@ -269,8 +264,8 @@ public:
         crow->Add(status_, 1, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(10));
         box->Add(crow, 0, wxEXPAND | wxALL, FromDIP(6));
         auto* note = new wxStaticText(bp, wxID_ANY,
-                                      "Both are off by default. Updates come from the GitHub releases\n"
-                                      "and are checked with SHA-256 before they are installed.");
+                                      "Off by default; it only notifies. Updates are installed only when you\n"
+                                      "click Check now, and are checked with SHA-256 first.");
         note->SetForegroundColour(wxSystemSettings::GetColour(wxSYS_COLOUR_GRAYTEXT));
         box->Add(note, 0, wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(6));
         top->Add(box, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, pad);
@@ -293,12 +288,11 @@ public:
         s.alert_on_danger = alert_->GetValue();
         s.scan_interval_minutes = interval_->GetValue();
         s.auto_check = check_->GetValue();
-        s.auto_install = check_->GetValue() && install_->GetValue();
         return s;
     }
 
 private:
-    wxCheckBox *run_, *alert_, *check_, *install_;
+    wxCheckBox *run_, *alert_, *check_;
     wxSpinCtrl* interval_;
     wxStaticText* status_;
 
@@ -346,6 +340,7 @@ private:
             return;
         }
         SetStatus(ir.message);
+        for (auto& w : ir.warnings) ir.message += "\n\n" + w;
         if (wxMessageBox(U(ir.message + "\n\nRestart Hard Drive Monitor now to use it?"), "Hard Drive Monitor update",
                          wxYES_NO | wxICON_INFORMATION, this) == wxYES)
             EndModal(ID_RESTART);
@@ -374,11 +369,11 @@ public:
         list_->AppendColumn("Model", wxLIST_FORMAT_LEFT, FromDIP(270));
         list_->AppendColumn("Size", wxLIST_FORMAT_RIGHT, FromDIP(90));
         list_->AppendColumn("Temp", wxLIST_FORMAT_RIGHT, FromDIP(70));
-        list_->AppendColumn("Health", wxLIST_FORMAT_RIGHT, FromDIP(130));
+        list_->AppendColumn("Health", wxLIST_FORMAT_RIGHT, FromDIP(350));
         top->Add(list_, 1, wxEXPAND);
         panel->SetSizer(top);
         CreateStatusBar(1);
-        SetClientSize(FromDIP(wxSize(760, 300)));
+        SetClientSize(FromDIP(wxSize(980, 300)));
         CentreOnScreen();
 
         scan_->Bind(wxEVT_BUTTON, &MainFrame::OnScan, this);

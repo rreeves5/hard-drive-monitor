@@ -391,4 +391,108 @@ void dump_raw(const std::string& device, const char* part, const uint8_t* data, 
     std::ofstream f(std::string(dir) + "/" + base + "-" + part + ".bin", std::ios::binary);
     f.write(reinterpret_cast<const char*>(data), static_cast<std::streamsize>(len));
 }
+json ata_selftest_log_json(const uint8_t* b) {
+    static const char* status_text[16] = {"Completed without error", "Aborted by host", "Interrupted (host reset)",
+                                          "Fatal or unknown error", "Completed: unknown failure", "Completed: electrical failure",
+                                          "Completed: servo/seek failure", "Completed: read failure", "Completed: handling damage??",
+                                          nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, "Self-test routine in progress"};
+    auto type_text = [](uint8_t t) -> std::string {
+        switch (t) {
+            case 0x00: return "Offline";
+            case 0x01: return "Short offline";
+            case 0x02: return "Extended offline";
+            case 0x03: return "Conveyance offline";
+            case 0x04: return "Selective offline";
+            case 0x7F: return "Abort offline test";
+            case 0x81: return "Short captive";
+            case 0x82: return "Extended captive";
+            case 0x83: return "Conveyance captive";
+            case 0x84: return "Selective captive";
+        }
+        char buf[24];
+        std::snprintf(buf, sizeof buf, (t >= 0x40 && t <= 0x7E) || t >= 0x90 ? "Vendor (0x%02x)" : "Reserved (0x%02x)", t);
+        return buf;
+    };
+    json table = json::array();
+    int newest = b[508];   // 1-based index of the most recent entry, 0 = empty log
+    if (newest >= 1 && newest <= 21) {
+        for (int k = 0; k < 21; ++k) {
+            int i = ((newest - 1 - k) % 21 + 21) % 21;
+            const uint8_t* e = b + 2 + i * 24;
+            bool empty = true;
+            for (int x = 0; x < 24; ++x) if (e[x]) { empty = false; break; }
+            if (empty) continue;
+            uint8_t st = e[1] >> 4;
+            json row;
+            row["type"] = {{"value", e[0]}, {"string", type_text(e[0])}};
+            json js = {{"value", e[1]}};
+            if (status_text[st]) js["string"] = status_text[st];
+            else { char t[32]; std::snprintf(t, sizeof t, "Unknown status (0x%01x)", st); js["string"] = t; }
+            if (st == 15) js["remaining_percent"] = (e[1] & 0x0F) * 10;
+            if (st != 1 && st != 2 && st != 15) js["passed"] = st == 0;
+            row["status"] = js;
+            row["lifetime_hours"] = e[2] | e[3] << 8;
+            if (st >= 3 && st <= 8) {
+                uint32_t lba = e[5] | e[6] << 8 | e[7] << 16 | static_cast<uint32_t>(e[8]) << 24;
+                if (lba != 0xFFFFFFFFu) row["lba"] = lba;
+            }
+            table.push_back(row);
+        }
+    }
+    return {{"revision", b[0] | b[1] << 8}, {"table", table}, {"count", table.size()}};
+}
+
+json nvme_selftest_log_json(const uint8_t* b) {
+    auto code_text = [](int c) -> std::string {
+        switch (c) { case 1: return "Short"; case 2: return "Extended"; case 0xE: return "Vendor specific"; }
+        return "Unknown (0x" + std::string(1, "0123456789abcdef"[c & 0xF]) + ")";
+    };
+    static const char* res_text[10] = {"Completed without error", "Aborted: Self-test command", "Aborted: Controller Reset",
+                                       "Aborted: Namespace removed", "Aborted: Format NVM command", "Fatal or unknown test error",
+                                       "Completed: unknown failed segment", "Completed: failed segments", "Aborted: unknown reason",
+                                       "Aborted: sanitize operation"};
+    int cur = b[0] & 0x0F;
+    std::string cur_text = cur == 0 ? "No self-test in progress" : cur == 1 ? "Short self-test in progress"
+                         : cur == 2 ? "Extended self-test in progress" : cur == 0xE ? "Vendor specific self-test in progress"
+                                                                                   : "Unknown self-test in progress";
+    json j = {{"current_self_test_operation", {{"value", cur}, {"string", cur_text}}}};
+    if (cur) j["current_self_test_completion_percent"] = b[1] & 0x7F;
+    json table = json::array();
+    for (int i = 0; i < 20; ++i) {
+        const uint8_t* e = b + 4 + i * 28;
+        int res = e[0] & 0x0F, code = e[0] >> 4;
+        if (res == 0x0F) continue;   // unused entry
+        json row;
+        row["self_test_code"] = {{"value", code}, {"string", code_text(code)}};
+        row["self_test_result"] = {{"value", res}, {"string", res < 10 ? res_text[res] : "Unknown result"}};
+        uint64_t poh = 0;
+        for (int x = 7; x >= 0; --x) poh = poh << 8 | e[4 + x];
+        row["power_on_hours"] = poh;
+        if ((e[2] & 0x01) && e[12] | e[13] | e[14] | e[15]) row["nsid"] = e[12] | e[13] << 8 | e[14] << 16 | static_cast<uint32_t>(e[15]) << 24;
+        if (e[2] & 0x02) {
+            uint64_t lba = 0;
+            for (int x = 7; x >= 0; --x) lba = lba << 8 | e[16 + x];
+            row["lba"] = lba;
+        }
+        table.push_back(row);
+    }
+    if (!table.empty()) j["table"] = table;
+    return j;
+}
+
+std::optional<uint8_t> ata_selftest_subcommand(const std::string& kind) {
+    if (kind == "short") return 0x01;
+    if (kind == "long" || kind == "extended") return 0x02;
+    if (kind == "conveyance") return 0x03;
+    if (kind == "abort") return 0x7F;
+    return std::nullopt;
+}
+
+std::optional<uint32_t> nvme_selftest_code(const std::string& kind) {
+    if (kind == "short") return 0x1;
+    if (kind == "long" || kind == "extended") return 0x2;
+    if (kind == "abort") return 0xF;
+    return std::nullopt;
+}
+
 }  // namespace hdmon::native

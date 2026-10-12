@@ -1,4 +1,6 @@
 #include "service.hpp"
+#include "dbus.hpp"
+#include "osnative.hpp"
 #include "config.hpp"
 
 #include <algorithm>
@@ -198,6 +200,7 @@ std::string utf16le_with_bom(const std::string& s) {
 // ------------------------------------------------------------------ helpers
 
 static bool systemd_user_ok() {
+    if (dbus::systemd_user_available()) return true;   // native: D-Bus to org.freedesktop.systemd1
     if (!which("systemctl")) return false;
     auto r = run_cmd({"systemctl", "--user", "show-environment"}, 15);
     return r.started && r.rc == 0;
@@ -268,7 +271,13 @@ static int install_linux(const std::vector<std::string>& argv, int64_t interval_
     std::vector<std::vector<std::string>> cmds = {{"systemctl", "--user", "daemon-reload"},
                                                   {"systemctl", "--user", "enable", "--now", "hard-drive-monitor.timer"}};
     if (enable && !dry_run) {
-        for (auto& c : cmds) if (!run_logged(c, out)) return 1;
+        std::string err;
+        if (dbus::systemd_user_enable({"hard-drive-monitor.timer"}, "hard-drive-monitor.timer", err)) {
+            out("  systemd (D-Bus): Reload, EnableUnitFiles + StartUnit hard-drive-monitor.timer");
+        } else {
+            out("  systemd D-Bus call failed (" + err + "); falling back to systemctl");
+            for (auto& c : cmds) if (!run_logged(c, out)) return 1;
+        }
         out("Scheduled: hourly + 2 min after you log in (systemd user timer, no root).\n"
             "  Check:    systemctl --user list-timers hard-drive-monitor.timer\n"
             "  Turn off: hdmon uninstall-service   (or: systemctl --user disable --now hard-drive-monitor.timer)\n"
@@ -308,8 +317,14 @@ static int install_macos(const std::vector<std::string>& argv, int64_t interval_
     std::string uid = uid_str();
     std::vector<std::string> cmd = {"launchctl", "bootstrap", "gui/" + uid, path};
     if (enable && !dry_run) {
-        run_logged({"launchctl", "bootout", "gui/" + uid + "/" + label}, [](const std::string&) {});
-        if (!run_logged(cmd, out) && !run_logged({"launchctl", "load", "-w", path}, out)) return 1;
+        std::string err;
+        if (osn::launchd_submit_plist(path, err)) {
+            out("  launchd (ServiceManagement SMJobSubmit): loaded " + label + " for this session");
+        } else {
+            out("  SMJobSubmit failed (" + err + "); falling back to launchctl");
+            run_logged({"launchctl", "bootout", "gui/" + uid + "/" + label}, [](const std::string&) {});
+            if (!run_logged(cmd, out) && !run_logged({"launchctl", "load", "-w", path}, out)) return 1;
+        }
         out("Scheduled: at login + hourly (launchd agent, runs as you).\n"
             "  Check:    launchctl print gui/" + uid + "/" + label + "\n"
             "  Turn off: hdmon uninstall-service");
@@ -333,6 +348,13 @@ static int install_windows(const std::vector<std::string>& argv, int64_t interva
             "terminal:  hdmon install-service   so the task runs with highest privileges. Without it the task\n"
             "falls back to the Windows Storage counters, or reports drives as unreadable.");
     if (dry_run || !enable) { out(xml); return 0; }
+    std::string err;
+    if (osn::task_register_xml(TASK_NAME, xml, err)) {
+        out("  Task Scheduler (COM ITaskService): registered \\" + std::string(TASK_NAME));
+        out(std::string("Scheduled. Check: Task Scheduler > ") + TASK_NAME + "   Turn off: hdmon uninstall-service");
+        return 0;
+    }
+    out("  Task Scheduler COM call failed (" + err + "); falling back to schtasks");
     auto xml_path = (fs::temp_directory_path() / ("hdmon-task-" + std::to_string(std::rand()) + ".xml")).string();
     write_file(xml_path, utf16le_with_bom(xml));
     bool ok = run_logged({"schtasks", "/Create", "/TN", TASK_NAME, "/XML", xml_path, "/F"}, out);
@@ -361,13 +383,23 @@ int uninstall_service(bool system, const Out& out) {
         }
         std::string d = systemd_user_dir();
         bool bus = systemd_user_ok();
-        if (bus && file_exists(path_join(d, "hard-drive-monitor.timer")))
-            run_logged({"systemctl", "--user", "disable", "--now", "hard-drive-monitor.timer"}, out);
+        if (bus && file_exists(path_join(d, "hard-drive-monitor.timer"))) {
+            std::string err;
+            if (dbus::systemd_user_disable({"hard-drive-monitor.timer"}, "hard-drive-monitor.timer", err))
+                out("  systemd (D-Bus): StopUnit + DisableUnitFiles hard-drive-monitor.timer");
+            else {
+                out("  systemd D-Bus call failed (" + err + "); falling back to systemctl");
+                run_logged({"systemctl", "--user", "disable", "--now", "hard-drive-monitor.timer"}, out);
+            }
+        }
         for (const char* name : {"hard-drive-monitor.timer", "hard-drive-monitor.service"}) {
             std::string p = path_join(d, name);
             if (file_exists(p)) { std::error_code ec; fs::remove(p, ec); out("Removed " + p); }
         }
-        if (bus) run_logged({"systemctl", "--user", "daemon-reload"}, out);
+        if (bus) {
+            std::string err;
+            if (!dbus::systemd_user_reload(err)) run_logged({"systemctl", "--user", "daemon-reload"}, out);
+        }
         auto cur = crontab_read();
         if (cur && std::any_of(cur->begin(), cur->end(), [](const std::string& l) { return contains(l, CRON_MARK); })) {
             std::vector<std::string> keep;
@@ -385,11 +417,20 @@ int uninstall_service(bool system, const Out& out) {
             return 0;
         }
         std::string path = path_join(path_join(path_join(home_dir(), "Library"), "LaunchAgents"), label + ".plist");
-        if (!run_logged({"launchctl", "bootout", "gui/" + uid_str() + "/" + label}, out))
-            run_logged({"launchctl", "unload", "-w", path}, out);
+        std::string err;
+        if (osn::launchd_remove(label, err)) {
+            out("  launchd (ServiceManagement SMJobRemove): unloaded " + label);
+        } else {
+            out("  SMJobRemove failed (" + err + "); falling back to launchctl");
+            if (!run_logged({"launchctl", "bootout", "gui/" + uid_str() + "/" + label}, out))
+                run_logged({"launchctl", "unload", "-w", path}, out);
+        }
         if (file_exists(path)) { std::error_code ec; fs::remove(path, ec); out("Removed " + path); }
         return 0;
     }
+    std::string err;
+    if (osn::task_delete(TASK_NAME, err)) { out(std::string("Removed scheduled task ") + TASK_NAME + " (Task Scheduler COM)"); return 0; }
+    out("  Task Scheduler COM call failed (" + err + "); falling back to schtasks");
     return run_logged({"schtasks", "/Delete", "/TN", TASK_NAME, "/F"}, out) ? 0 : 1;
 }
 

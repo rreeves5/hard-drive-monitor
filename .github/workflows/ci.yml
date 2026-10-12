@@ -59,6 +59,49 @@ jobs:
           ${{ matrix.binary }} install-service --dry-run --json
           ${{ matrix.binary }} update --help
 
+      - name: Linux - D-Bus notifications + systemd1 calls (private dbus-daemon, libdbus fake services)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq libdbus-1-dev dbus >/dev/null
+          tools/dbus-verify/verify.sh build/hdmon | tee dbus.log
+          grep -q "Notifications.Notify sig=susssasa{sv}i" dbus.log
+          grep -q "Manager.EnableUnitFiles sig=asbb" dbus.log
+          grep -q "Manager.StartUnit sig=ss" dbus.log
+          grep -q "Manager.DisableUnitFiles sig=asb" dbus.log
+
+      - name: Windows - Task Scheduler COM round trip
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $out = & build/Release/hdmon.exe install-service | Out-String
+          Write-Output $out
+          if ($LASTEXITCODE -ne 0) { throw 'install-service failed' }
+          if ($out -notmatch 'COM ITaskService') { throw 'did not use the Task Scheduler COM API' }
+          $xml = schtasks /Query /TN hard-drive-monitor /XML | Out-String
+          if ($xml -notmatch 'hdmonw.exe') { throw 'registered task has no hdmonw.exe action' }
+          if ($xml -notmatch 'TimeTrigger') { throw 'registered task has no repeating trigger' }
+          $out = & build/Release/hdmon.exe uninstall-service | Out-String
+          Write-Output $out
+          if ($out -notmatch 'Task Scheduler COM') { throw 'uninstall did not use COM' }
+          schtasks /Query /TN hard-drive-monitor 2>$null | Out-Null
+          if ($LASTEXITCODE -eq 0) { throw 'task still registered after uninstall' }
+          $global:LASTEXITCODE = 0
+
+      - name: Windows - Shell_NotifyIcon alert (informational)
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        run: build/Release/hdmon.exe alert-test
+
+      - name: macOS - launchd via ServiceManagement (informational)
+        if: runner.os == 'macOS'
+        continue-on-error: true
+        run: |
+          build/hdmon install-service | tee svc.log
+          grep -E "SMJobSubmit|launchctl" svc.log
+          launchctl print gui/$(id -u)/com.hard-drive-monitor.check | head -8 || true
+          build/hdmon uninstall-service
+          build/hdmon alert-test || true
+
       - name: Linux - check the binary is static
         if: runner.os == 'Linux'
         run: |

@@ -37,8 +37,26 @@ HOME=/tmp/u setfcap --run 1000 /tmp/hdmon-user status --no-record --color never 
 echo "== non-root (uid 1000) with file capabilities cap_sys_rawio,cap_sys_admin,cap_dac_read_search+ep"
 setfcap /tmp/hdmon-user && echo "caps set"
 HOME=/tmp/u setfcap --run 1000 /tmp/hdmon-user status --no-record --color never 2>&1 | head -9
+echo "== native self-test start (source = native, so smartctl is never used)"
+printf "[smart]\nsource = \"native\"\n" > /tmp/nat.toml
+for d in /dev/sda /dev/nvme0; do
+  echo "-- hdmon selftest $d short"; HOME=/tmp hdmon selftest $d short --json --config /tmp/nat.toml 2>&1; echo rc=$?
+done
+sleep 5
+for d in /dev/sda /dev/nvme0; do
+  echo "-- hdmon selftest $d --results (native)"; HOME=/tmp hdmon selftest $d --results --config /tmp/nat.toml --color never 2>&1 | head -8
+  echo "-- smartctl -l selftest $d (independent check)"; smartctl -l selftest $d 2>&1 | tail -6
+done
+echo "-- after the test: native raw dump of the self-test log + smartctl's view of it (parity fixture)"
+mkdir -p /out/raw-selftest
+HDMON_NATIVE_DUMP=/out/raw-selftest HOME=/tmp hdmon status --json --no-record --config /tmp/nat.toml > /out/hdmon-native-after-selftest.json 2>&1
+smartctl -l selftest --json /dev/sda > /out/smartctl-selftest-sda.json 2>&1
+echo "-- hdmon update keeps setcap capabilities (root; hdmon_tests with fake release hooks)"
+[ -x /bin/hdmon_tests ] && HOME=/tmp /bin/hdmon_tests -tc="*security.capability*" -s 2>&1 | grep -E "MESSAGE|root xattr|test cases|Status" 
+echo "-- uid 1000 with capabilities: hdmon selftest /dev/sdb short"
+HOME=/tmp/u setfcap --run 1000 /tmp/hdmon-user selftest /dev/sdb short --json --config /tmp/nat.toml 2>&1; echo rc=$?
 } > $O 2>&1
 for f in /out/*; do [ -f "$f" ] || continue; echo "@@@FILE $f"; cat $f; echo; echo "@@@END"; done > /dev/console
-for f in /out/raw/*; do echo "@@@B64 $f"; base64 $f; echo "@@@END"; done > /dev/console
+for f in /out/raw/* /out/raw-selftest/*; do echo "@@@B64 $f"; base64 $f; echo "@@@END"; done > /dev/console
 sync
 poweroff -f

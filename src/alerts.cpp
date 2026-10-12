@@ -1,4 +1,5 @@
 #include "alerts.hpp"
+#include "osnative.hpp"
 
 #include "raid.hpp"
 #include "render.hpp"
@@ -68,8 +69,9 @@ std::vector<Alert> build_array_alerts(const std::vector<RaidArray>& arrays, cons
             for (auto& m : a.members) {
                 const Result* r = member_result(m, results);
                 std::string label = r ? drive_label(r->first) : (m.device.empty() ? std::string("(missing disk)") : m.device);
-                std::string st = r ? r->second.status + (r->second.health ? " " + std::to_string(*r->second.health) + "%" : "") : "no SMART data";
-                lines.push_back("- " + label + ": " + m.role + ", " + st);
+                std::string st = r ? "SMART " + r->second.status + (r->second.health ? " " + std::to_string(*r->second.health) + "%" : "") : "no SMART data";
+                std::string rt = member_role_text(m);
+                lines.push_back("- " + label + ": " + member_status(m, r) + " (" + (rt.empty() ? m.role : rt) + "), " + st);
             }
             if (ev == "rebuilding") lines.push_back("The array has no redundancy until the rebuild finishes.");
             if (ev == "degraded" || ev == "failed") lines.push_back("Back up the data on this array now and replace the failed disk.");
@@ -83,16 +85,19 @@ std::vector<Alert> build_array_alerts(const std::vector<RaidArray>& arrays, cons
 static std::string clip(const std::string& s, size_t n) { return u8substr(s, n); }
 
 std::pair<bool, std::string> notify_desktop(const std::string& title, const std::string& body) {
+    // Native first (D-Bus / Shell_NotifyIcon / UserNotifications); the helper programs below are the fallback.
+    std::string native_why;
+    if (osn::notify(title, clip(body, 240), native_why)) return {true, native_why};
     switch (current_os()) {
         case OS::MacOS: {
             auto r = run_cmd({"osascript", "-e", "on run argv", "-e",
                               "display notification (item 2 of argv) with title (item 1 of argv) sound name \"Basso\"",
                               "-e", "end run", title, clip(body, 240)}, 30);
-            return {r.rc == 0, r.started ? (trim(r.err).empty() ? "osascript" : trim(r.err)) : "osascript not found"};
+            return {r.rc == 0, r.started ? (trim(r.err).empty() ? "osascript (" + native_why + ")" : trim(r.err)) : "osascript not found"};
         }
         case OS::Windows: {
             auto ps = powershell_exe();
-            if (!ps) return {false, "PowerShell not found; skipped desktop notification"};
+            if (!ps) return {false, native_why + "; PowerShell not found; skipped desktop notification"};
             set_env("HDMON_TITLE", title);
             set_env("HDMON_BODY", clip(body, 240));
             std::string script =
@@ -107,9 +112,9 @@ std::pair<bool, std::string> notify_desktop(const std::string& title, const std:
             return {r.rc == 0, trim(r.out).empty() ? trim(r.err) : trim(r.out)};
         }
         default: {
-            if (!which("notify-send")) return {false, "notify-send not found (install libnotify-bin / libnotify); skipped desktop notification"};
+            if (!which("notify-send")) return {false, native_why + "; notify-send not found either; skipped desktop notification"};
             auto r = run_cmd({"notify-send", "-a", "Hard Drive Monitor", "-u", "critical", "-i", "drive-harddisk", title, body}, 30);
-            return {r.rc == 0, trim(r.err).empty() ? "notify-send" : trim(r.err)};
+            return {r.rc == 0, trim(r.err).empty() ? "notify-send (" + native_why + ")" : trim(r.err)};
         }
     }
 }

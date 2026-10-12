@@ -25,6 +25,10 @@ json ata_identify_json(const uint8_t* identify512);
 // SMART READ DATA + READ THRESHOLDS sectors; `passed` from SMART RETURN STATUS when the drive answered it.
 json ata_smart_json(const uint8_t* data512, const uint8_t* thresholds512, std::optional<bool> passed);
 json nvme_identify_json(const uint8_t* id_ctrl4096);
+// SMART self-test log (SMART READ LOG address 06h) -> smartctl's ata_smart_self_test_log.standard, newest first.
+json ata_selftest_log_json(const uint8_t* log512);
+// NVMe Device Self-test log (log page 06h, 564 bytes) -> smartctl's nvme_self_test_log.
+json nvme_selftest_log_json(const uint8_t* log564);
 json nvme_health_json(const uint8_t* log512);
 // Combine the decoded parts with a device block ({"name","type","protocol"}) into one smartctl-shaped object.
 // dev_type: the smartctl -d name this read corresponds to ("sat" for SCSI-layer pass-through); defaults to ata/nvme.
@@ -60,6 +64,19 @@ struct ReadResult {
     bool permission_denied = false;
     bool unsupported = false;      // device answered but does not speak ATA/NVMe SMART (e.g. SAS, some USB)
 };
+
+// ---- self-test start (hdmon selftest)
+// ATA SMART EXECUTE OFF-LINE IMMEDIATE (B0h/D4h) subcommand in LBA low: 1 short, 2 extended, 3 conveyance, 7Fh abort.
+std::optional<uint8_t> ata_selftest_subcommand(const std::string& kind);
+// NVMe Device Self-test (admin 14h) STC in CDW10: 1 short, 2 extended, Fh abort (no conveyance on NVMe).
+std::optional<uint32_t> nvme_selftest_code(const std::string& kind);
+struct SelfTestResult {
+    bool ok = false;
+    std::string method, error;
+    bool permission_denied = false, unsupported = false;
+};
+// kind: short | long | conveyance | abort. NVMe self-test is sent to all namespaces (NSID FFFFFFFFh).
+SelfTestResult start_self_test(const Device& dev, const std::string& kind);
 
 const char* backend_name();                     // "Linux SG_IO / NVMe ioctl", ...
 std::vector<Device> list_devices();             // whole disks the OS knows about

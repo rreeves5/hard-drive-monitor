@@ -17,7 +17,9 @@ std::string desktop_exec_quote(const std::string& arg);   // freedesktop Exec= q
 std::string desktop_entry(const std::vector<std::string>& argv, const std::string& icon, bool autostart);
 std::string launch_agent_plist(const std::vector<std::string>& argv);
 // schtasks /Create arguments for a logon task with highest privileges.
-std::vector<std::string> windows_autostart_task_args(const std::string& exe);
+std::vector<std::string> windows_autostart_task_args(const std::string& exe);   // schtasks fallback
+// Task Scheduler XML for the elevated logon task registered through the COM API.
+std::string windows_autostart_task_xml(const std::string& exe, const std::string& user);
 std::string windows_run_value(const std::string& exe);    // "\"C:\\...\\hdmon-gui.exe\""
 std::string autostart_path(OS os);                         // file used on Linux/macOS ("" on Windows)
 

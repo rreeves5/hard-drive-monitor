@@ -59,6 +59,9 @@ std::string get_env(const char* k);
 // ---- files
 bool file_exists(const std::string& p);
 bool is_executable(const std::string& p);
+// Linux file capabilities (the raw "security.capability" xattr that setcap writes). "" when none / not Linux.
+std::string file_caps_get(const std::string& path);
+bool file_caps_set(const std::string& path, const std::string& blob, std::string& err);   // needs CAP_SETFCAP (root)
 bool is_dir(const std::string& p);
 std::string read_file(const std::string& p);
 bool write_file(const std::string& p, const std::string& data);

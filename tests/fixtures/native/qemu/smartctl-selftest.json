@@ -1,0 +1,25 @@
+{
+ "ata_smart_self_test_log": {
+  "standard": {
+   "revision": 1,
+   "table": [
+    {
+     "type": {
+      "value": 1,
+      "string": "Short offline"
+     },
+     "status": {
+      "value": 0,
+      "string": "Completed without error",
+      "passed": true
+     },
+     "lifetime_hours": 4660
+    }
+   ],
+   "count": 1,
+   "error_count_total": 0,
+   "error_count_outdated": 0
+  }
+ },
+ "_source": "smartctl 7.4 -l selftest --json on the QEMU AHCI disk after hdmon started a short test natively"
+}

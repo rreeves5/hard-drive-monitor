@@ -14,10 +14,6 @@
 .PARAMETER NoGui
   Do not install the desktop app (hdmon-gui.exe + Start Menu shortcut), even if it is present.
 
-.PARAMETER EnableAutoUpdate
-  Let the scheduled check look for a new release once a day and show a notification (it never installs
-  unless auto_install = true is set in config.toml). Off by default; same as `hdmon update --enable-auto-check`.
-
 .PARAMETER Binary
   Path to a hdmon.exe to install. Default: hdmon.exe next to this script, then
   dist\hdmon-windows-x86_64.exe, then build\(Release\)hdmon.exe; if none exists the script builds
@@ -29,7 +25,7 @@
   powershell -ExecutionPolicy Bypass -File .\install.ps1 -NoService
 #>
 [CmdletBinding()]
-param([switch]$System, [switch]$NoService, [string]$Binary = '', [switch]$EnableAutoUpdate, [switch]$NoGui)
+param([switch]$System, [switch]$NoService, [string]$Binary = '', [switch]$NoGui)
 
 # Native tools (cmake, schtasks) may write warnings to stderr; with 'Stop' Windows PowerShell 5.1 would turn those
 # into terminating errors. Failures are checked explicitly via $LASTEXITCODE instead.
@@ -218,13 +214,8 @@ if ($NoGui) {
     }
 }
 
-# --- automatic update checks: OFF unless -EnableAutoUpdate was given (never turned on silently)
-if ($EnableAutoUpdate) {
-    & $exe update --enable-auto-check
-    if ($LASTEXITCODE -ne 0) { Write-Warning 'Could not enable automatic update checks.' }
-} else {
-    Say 'Automatic update checks are off (default). Check by hand with: hdmon update --check'
-}
+# --- updates: never automatic. `hdmon update --enable-auto-check` adds a daily notify-only check.
+Say 'Updates are manual: hdmon update --check (optional daily notification: hdmon update --enable-auto-check)'
 
 Write-Host ''
 Write-Host 'Open a NEW Command Prompt or PowerShell window, then run:'

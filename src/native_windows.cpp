@@ -223,6 +223,10 @@ ReadResult read_ata(const Device& dev, int n) {
         ok_t = smart_ioctl(h.h, 0xB0, 0xD1, thr, nullptr, nullptr, err);
         ok_s = smart_ioctl(h.h, 0xB0, 0xDA, nullptr, &mid, &high, err);
     }
+    uint8_t stlog[512] = {0};
+    const uint8_t log_tf[7] = {0xD5, 1, 0x06, 0x4F, 0xC2, 0xA0, 0xB0};   // SMART READ LOG 06h (self-test log)
+    DWORD lerr = 0;
+    bool ok_l = !legacy && ata_pt(h.h, log_tf, stlog, nullptr, nullptr, lerr);
     if (!ok_d) {
         r.error = "SMART READ DATA: " + win_error(err);
         r.permission_denied = err == ERROR_ACCESS_DENIED;
@@ -231,6 +235,7 @@ ReadResult read_ata(const Device& dev, int n) {
     r.ok = true;
     r.data = assemble(dev.name, "ATA", ident,
                       ata_smart_json(data, ok_t ? thr : nullptr, ok_s ? ata_status_from_lba(mid, high) : std::nullopt));
+    if (ok_l) r.data["ata_smart_self_test_log"] = {{"standard", ata_selftest_log_json(stlog)}};
     return r;
 }
 
@@ -290,9 +295,86 @@ ReadResult read_nvme(const Device& dev, int n) {
     r.ok = true;
     r.method = "IOCTL_STORAGE_QUERY_PROPERTY NVMe";
     r.data = assemble(dev.name, "NVMe", have_id ? nvme_identify_json(id.data()) : json::object(), nvme_health_json(log.data()));
+    std::vector<uint8_t> stlog;
+    DWORD serr = 0;
+    if (nvme_query(use, NVMeDataTypeLogPage, 6 /* Device Self-test */, 564, stlog, serr) && stlog.size() >= 564)
+        r.data["nvme_self_test_log"] = nvme_selftest_log_json(stlog.data());
     return r;
 }
 }  // namespace
+
+SelfTestResult start_self_test(const Device& dev, const std::string& kind) {
+    SelfTestResult r;
+    int n = std::atoi(dev.name.c_str() + std::string("PhysicalDrive").size());
+    Handle h(drive_path(n), GENERIC_READ | GENERIC_WRITE);
+    if (!h.ok()) {
+        r.error = "open " + dev.path + ": " + win_error(h.error);
+        r.permission_denied = h.error == ERROR_ACCESS_DENIED;
+        return r;
+    }
+    DWORD err = 0;
+    if (dev.protocol == "NVMe") {
+        auto code = nvme_selftest_code(kind);
+        if (!code) { r.unsupported = true; r.error = "NVMe has no '" + kind + "' self-test"; return r; }
+        size_t off = offsetof(STORAGE_PROTOCOL_COMMAND, Command);
+        std::vector<uint8_t> buf(off + STORAGE_PROTOCOL_COMMAND_LENGTH_NVME + 64, 0);
+        auto* pc = reinterpret_cast<STORAGE_PROTOCOL_COMMAND*>(buf.data());
+        pc->Version = STORAGE_PROTOCOL_STRUCTURE_VERSION;
+        pc->Length = sizeof(STORAGE_PROTOCOL_COMMAND);
+        pc->ProtocolType = ProtocolTypeNvme;
+        pc->Flags = STORAGE_PROTOCOL_COMMAND_FLAG_ADAPTER_REQUEST;
+        pc->CommandLength = STORAGE_PROTOCOL_COMMAND_LENGTH_NVME;
+        pc->ErrorInfoLength = 64;
+        pc->ErrorInfoOffset = static_cast<DWORD>(off + STORAGE_PROTOCOL_COMMAND_LENGTH_NVME);
+        pc->TimeOutValue = 30;
+        pc->CommandSpecific = STORAGE_PROTOCOL_SPECIFIC_NVME_ADMIN_COMMAND;
+        uint32_t* cmd = reinterpret_cast<uint32_t*>(buf.data() + off);   // NVMe SQE: CDW0 opcode, CDW1 NSID, CDW10
+        cmd[0] = 0x14;
+        cmd[1] = 0xFFFFFFFF;
+        cmd[10] = *code;
+        DWORD ret = 0;
+        r.method = "IOCTL_STORAGE_PROTOCOL_COMMAND (NVMe Device Self-test 14h)";
+        if (!DeviceIoControl(h.h, IOCTL_STORAGE_PROTOCOL_COMMAND, buf.data(), (DWORD)buf.size(), buf.data(), (DWORD)buf.size(), &ret, nullptr)) {
+            err = GetLastError();
+            r.error = win_error(err);
+            r.permission_denied = err == ERROR_ACCESS_DENIED;
+            r.unsupported = err == ERROR_NOT_SUPPORTED || err == ERROR_INVALID_FUNCTION || err == ERROR_INVALID_PARAMETER;
+            return r;
+        }
+        if (pc->ReturnStatus != STORAGE_PROTOCOL_STATUS_SUCCESS) {
+            r.error = "NVMe command status " + std::to_string(pc->ReturnStatus) + " (error code " + std::to_string(pc->ErrorCode) + ")";
+            r.unsupported = pc->ReturnStatus == STORAGE_PROTOCOL_STATUS_NOT_SUPPORTED || pc->ReturnStatus == STORAGE_PROTOCOL_STATUS_INVALID_REQUEST;
+            return r;
+        }
+        r.ok = true;
+        return r;
+    }
+    auto sub = ata_selftest_subcommand(kind);
+    if (!sub) { r.unsupported = true; r.error = "unknown self-test '" + kind + "'"; return r; }
+    const uint8_t tf[7] = {0xD4, 0, *sub, 0x4F, 0xC2, 0xA0, 0xB0};   // features, count, LBA low = subcommand, mid, high
+    r.method = "IOCTL_ATA_PASS_THROUGH SMART EXECUTE OFF-LINE IMMEDIATE";
+    if (ata_pt(h.h, tf, nullptr, nullptr, nullptr, err)) { r.ok = true; return r; }
+    // legacy SMART_SEND_DRIVE_COMMAND (EXECUTE_OFFLINE_DIAGS), subcommand in the sector-number register
+    SENDCMDINPARAMS in{};
+    in.irDriveRegs.bFeaturesReg = 0xD4;
+    in.irDriveRegs.bSectorNumberReg = *sub;
+    in.irDriveRegs.bCylLowReg = 0x4F;
+    in.irDriveRegs.bCylHighReg = 0xC2;
+    in.irDriveRegs.bDriveHeadReg = 0xA0;
+    in.irDriveRegs.bCommandReg = 0xB0;
+    std::vector<uint8_t> out(sizeof(SENDCMDOUTPARAMS) + 16);
+    DWORD ret = 0, err2 = 0;
+    if (DeviceIoControl(h.h, SMART_SEND_DRIVE_COMMAND, &in, sizeof in - 1, out.data(), (DWORD)out.size(), &ret, nullptr)) {
+        r.ok = true;
+        r.method = "SMART_SEND_DRIVE_COMMAND EXECUTE_OFFLINE_DIAGS";
+        return r;
+    }
+    err2 = GetLastError();
+    r.error = "ATA pass-through: " + win_error(err) + "; SMART_SEND_DRIVE_COMMAND: " + win_error(err2);
+    r.permission_denied = err == ERROR_ACCESS_DENIED || err2 == ERROR_ACCESS_DENIED;
+    r.unsupported = !r.permission_denied;
+    return r;
+}
 
 ReadResult read_device(const Device& dev) {
     int n = std::atoi(dev.name.c_str() + std::string("PhysicalDrive").size());

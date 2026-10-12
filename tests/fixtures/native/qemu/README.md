@@ -14,3 +14,7 @@ smartctl's JSON: the same attributes, raw strings, health score and status.
 
 The devices are emulated. These files show that the kernel ioctl path and the decoders work. They do not
 show that any vendor's firmware behaves the same way.
+
+hdd-selftest-log.bin / smartctl-selftest.json (0.2.5): SMART READ LOG 06h dumped by hdmon's native backend after
+`hdmon selftest /dev/sda short` (SMART EXECUTE OFF-LINE IMMEDIATE, sent natively) completed in the QEMU VM, and
+smartctl's independent decoding of the same log.

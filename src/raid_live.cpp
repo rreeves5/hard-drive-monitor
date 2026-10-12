@@ -35,8 +35,15 @@ std::vector<RaidArray> detect_live_software_arrays(json& meta) {
             break;
         }
         case OS::MacOS: {
-            auto r = run_cmd({"/usr/sbin/diskutil", "appleRAID", "list"}, 30);
-            if (r.rc == 0) for (auto& a : parse_appleraid(r.out)) out.push_back(a);
+            // IOKit registry (AppleRAIDSet / AppleRAIDMember objects); diskutil only if IOKit could not be asked.
+            std::string err;
+            json snap = appleraid_ioreg_snapshot(err);
+            if (err.empty()) {
+                for (auto& a : parse_appleraid_ioreg(snap)) out.push_back(a);
+            } else {
+                auto r = run_cmd({"/usr/sbin/diskutil", "appleRAID", "list"}, 30);
+                if (r.rc == 0) for (auto& a : parse_appleraid(r.out)) out.push_back(a);
+            }
             break;
         }
     }

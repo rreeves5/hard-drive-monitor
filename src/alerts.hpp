@@ -1,4 +1,5 @@
-// Desktop notifications and e-mail (via the curl command-line tool). Alerts fire only on worsening.
+// Desktop notifications (native, helper programs as fallback) and e-mail (via the curl command-line tool).
+// Alerts fire only on worsening.
 #pragma once
 #include <string>
 #include <utility>

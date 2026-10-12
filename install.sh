@@ -10,7 +10,6 @@
 #   ./install.sh --binary FILE  install this hdmon binary
 #   ./install.sh --build        always build from source with CMake
 #   ./install.sh --no-gui       skip the desktop app (hdmon-gui / Hard Drive Monitor.app) even if present
-#   ./install.sh --enable-auto-update  let the scheduled check look for new releases once a day
 #                               (notify only). Off by default; same as: hdmon update --enable-auto-check
 #
 # Uses a prebuilt binary when one matches this machine (in order: --binary FILE, ./hdmon next to
@@ -29,7 +28,6 @@ SERVICE=1
 CAPS=ask
 BINARY=""
 FORCE_BUILD=0
-AUTO_UPDATE=0
 GUI=1
 
 while [ $# -gt 0 ]; do
@@ -41,7 +39,6 @@ while [ $# -gt 0 ]; do
     --binary) shift; BINARY="${1:-}" ;;
     --binary=*) BINARY="${1#--binary=}" ;;
     --build) FORCE_BUILD=1 ;;
-    --enable-auto-update) AUTO_UPDATE=1 ;;
     --no-gui) GUI=0 ;;
     -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
@@ -87,6 +84,21 @@ if [ "$FORCE_BUILD" = 0 ]; then
   done
 fi
 if [ -z "$CANDIDATE" ]; then build_from_source; else say "Using prebuilt binary $CANDIDATE"; fi
+
+# Replacing the file drops any file capabilities it had (setcap is stored on the inode). Remember whether the
+# installed copy had them so they can be granted again below.
+has_caps() {
+  [ -f "$1" ] || return 1
+  if command -v getcap >/dev/null 2>&1 || [ -x /usr/sbin/getcap ] || [ -x /sbin/getcap ]; then
+    gc="$(command -v getcap 2>/dev/null || true)"; [ -n "$gc" ] || gc=/usr/sbin/getcap; [ -x "$gc" ] || gc=/sbin/getcap
+    "$gc" "$1" 2>/dev/null | grep -q cap_sys_rawio && return 0
+    return 1
+  fi
+  command -v getfattr >/dev/null 2>&1 && getfattr -n security.capability "$1" >/dev/null 2>&1 && return 0
+  grep -q '^caps=1' "$STATE_DIR/install-state" 2>/dev/null   # no tool to look: trust the last install
+}
+PREV_CAPS=0
+if [ "$OS" = linux ] && { has_caps "$BIN/hdmon" || has_caps "$BIN/hdmon-gui"; }; then PREV_CAPS=1; fi
 
 mkdir -p "$BIN"
 tmpbin="$BIN/.hdmon.new.$$"
@@ -184,6 +196,15 @@ if [ "$OS" = linux ]; then
   for c in /usr/sbin/setcap /sbin/setcap; do [ -z "$SETCAP" ] && [ -x "$c" ] && SETCAP="$c"; done
   targets="$BIN/hdmon"
   [ -x "$BIN/hdmon-gui" ] && targets="$targets $BIN/hdmon-gui"
+  if [ "$CAPS" = ask ] && [ "$PREV_CAPS" = 1 ]; then
+    say "The previous hdmon had SMART capabilities; replacing the binary removed them, so granting them again."
+    CAPS=again
+  fi
+  if [ "$CAPS" = no ] && [ "$PREV_CAPS" = 1 ]; then
+    say "WARNING: the previous hdmon had SMART capabilities and replacing it removed them (--no-setcap given)."
+    say "         Background checks running as you cannot read the drives until you run:"
+    echo "    sudo setcap $CAP_SET $targets"
+  fi
   if [ "$CAPS" = ask ]; then
     if [ -t 0 ]; then
       echo
@@ -195,16 +216,23 @@ if [ "$OS" = linux ]; then
       case "$ans" in y|Y|yes|YES) CAPS=yes ;; *) CAPS=no ;; esac
     else CAPS=no; fi
   fi
-  if [ "$CAPS" = yes ]; then
+  if [ "$CAPS" = yes ] || [ "$CAPS" = again ]; then
     if [ -z "$SETCAP" ]; then
       say "setcap not found (Debian/Ubuntu: sudo apt install libcap2-bin; Fedora: libcap; Arch: libcap)."
+      [ "$CAPS" = again ] && say "WARNING: SMART capabilities were NOT re-applied; background checks cannot read the drives."
     else
       ok=1
-      for t in $targets; do sudo "$SETCAP" "$CAP_SET" "$t" || ok=0; done
+      # Re-applying without a terminal: only if sudo needs no password (never hang a scripted update).
+      SUDO="sudo"; { [ "$CAPS" = again ] && [ ! -t 0 ]; } && SUDO="sudo -n"
+      for t in $targets; do $SUDO "$SETCAP" "$CAP_SET" "$t" || ok=0; done
       if [ "$ok" = 1 ]; then echo "caps=1" >> "$STATE_DIR/install-state"; say "Granted SMART access to: $targets"
-      else say "setcap failed (is $BIN on a filesystem mounted nosuid?). Run hdmon with sudo instead."; fi
+      else
+        say "WARNING: setcap failed, so SMART capabilities are NOT set on: $targets"
+        say "         (no sudo, or $BIN is on a filesystem mounted nosuid). Fix with:"
+        echo "    sudo setcap $CAP_SET $targets"
+      fi
     fi
-  else
+  elif [ "$PREV_CAPS" = 0 ]; then
     say "No capabilities granted: run 'sudo hdmon status', or later: ./install.sh --setcap"
     echo "    (or by hand: sudo setcap $CAP_SET \"$BIN/hdmon\")"
   fi
@@ -214,12 +242,8 @@ if [ -n "$SMARTCTL" ]; then
   say "smartmontools found ($SMARTCTL): used only as a fallback for drives the native read cannot handle."
 fi
 
-# --- automatic update checks: OFF unless --enable-auto-update was given (never turned on silently)
-if [ "$AUTO_UPDATE" = 1 ]; then
-  "$BIN/hdmon" update --enable-auto-check || say "Could not enable automatic update checks."
-else
-  say "Automatic update checks are off (default). Check by hand with: hdmon update --check"
-fi
+# --- updates: never automatic. Check by hand; `hdmon update --enable-auto-check` adds a daily notify-only check.
+say "Updates are manual: hdmon update --check (optional daily notification: hdmon update --enable-auto-check)"
 
 cat <<MSG
 

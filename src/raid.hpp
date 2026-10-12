@@ -39,7 +39,17 @@ struct RaidArray {
 // ---- health rollup
 std::string state_status(const std::string& state);        // OK->OK, DEGRADED/REBUILDING->WARNING, FAILED->CRITICAL
 std::string array_status(const RaidArray& a, const std::vector<Result>& results);
-std::string state_text(const RaidArray& a);                 // "Degraded", "Rebuilding 45%", ...
+std::string state_text(const RaidArray& a);                 // "Degraded", "Rebuilding 45.0%", ...
+// state_text, except an array whose own state is not readable (hardware controllers) says so honestly:
+// "Worst disk OK (controller state not readable)".
+std::string state_label(const RaidArray& a, const std::vector<Result>& results, bool brief = false);   // brief: "Worst disk OK"
+// A member's status inside its array. The role wins when it is worse than SMART:
+//   failed / missing -> CRITICAL ("Failed (removed from array)" / "Missing from array"), whatever SMART says
+//   rebuilding       -> at least WARNING ("Rebuilding")
+//   spare            -> its SMART status, OK when there is none ("Spare")
+//   active           -> its SMART status (UNKNOWN without SMART data)
+std::string member_status(const ArrayMember& m, const Result* r);
+std::string member_role_text(const ArrayMember& m);         // "", "Failed (removed from array)", "Spare", ...
 std::string backend_label(const std::string& backend);      // "Linux md", "Storage Spaces", ...
 const Result* member_result(const ArrayMember& m, const std::vector<Result>& results);
 std::set<std::string> member_keys(const std::vector<RaidArray>& arrays);   // drive keys shown under an array
@@ -52,7 +62,12 @@ std::vector<RaidArray> parse_mdstat(const std::string& text);
 RaidArray parse_mdadm_detail(const std::string& text, const std::string& name = "");
 void merge_md_detail(RaidArray& from_mdstat, const RaidArray& detail);
 std::vector<RaidArray> parse_storage_spaces(const json& inv);
-std::vector<RaidArray> parse_appleraid(const std::string& text);
+std::vector<RaidArray> parse_appleraid(const std::string& text);   // diskutil appleRAID list (fallback)
+// IOKit registry snapshot of AppleRAID objects (keys from Apple's AppleRAIDUserLib.h):
+// {"sets":[{AppleRAID-SetName, -SetUUID, -LevelName, -SetStatus, -Members, -Spares, "_bsd", "_size"}],
+//  "members":[{AppleRAID-MemberUUID, -SetUUID, -MemberStatus, -MemberIndex, -Rebuild-Progress, "_bsd", "_size"}]}
+std::vector<RaidArray> parse_appleraid_ioreg(const json& snapshot);
+json appleraid_ioreg_snapshot(std::string& err);   // macOS live (IOKit); {} elsewhere
 std::vector<RaidArray> parse_rstcli(const std::string& text);
 bool is_raid_dev_type(const std::string& dev_type);        // megaraid,N aacraid,H,L,ID areca,N 3ware,N cciss,N hpt,L/M/N
 std::vector<RaidArray> hardware_arrays(const std::vector<Result>& results);

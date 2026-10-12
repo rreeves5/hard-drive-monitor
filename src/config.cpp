@@ -96,14 +96,11 @@ nvme_temp_crit = 80
 devices = []
 
 [update]
-# Self-update from GitHub releases (github.com/rreeves5/hard-drive-monitor). Both are OFF by default.
+# Self-update from GitHub releases (github.com/rreeves5/hard-drive-monitor). OFF by default.
 # `hdmon update --check` / `hdmon update` always work by hand, whatever these say.
 # auto_check: the scheduled `hdmon check` looks for a new release at most once a day and only
 #             shows a desktop notification - it never installs anything.
 auto_check = false
-# auto_install: only together with auto_check - also download, verify (SHA-256) and install the
-#               new release quietly.
-auto_install = false
 )";
 
 json default_config() {
@@ -118,7 +115,7 @@ json default_config() {
     c["thresholds"] = {{"hdd_temp_warn", 50}, {"hdd_temp_crit", 55}, {"ssd_temp_warn", 60},
                        {"ssd_temp_crit", 70}, {"nvme_temp_warn", 70}, {"nvme_temp_crit", 80}};
     c["ignore"] = {{"devices", json::array()}};
-    c["update"] = {{"auto_check", false}, {"auto_install", false}};   // opt-in only
+    c["update"] = {{"auto_check", false}};   // opt-in only, notify only
     return c;
 }
 
