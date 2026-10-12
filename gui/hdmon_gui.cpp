@@ -364,13 +364,6 @@ public:
         SetIcon(app_icon());
         auto* panel = new wxPanel(this);
         auto* top = new wxBoxSizer(wxVERTICAL);
-        // VB MenuStrip: three flat items on top.
-        auto* bar = new wxBoxSizer(wxHORIZONTAL);
-        scan_ = new wxButton(panel, wxID_ANY, "Scan Now", wxDefaultPosition, wxDefaultSize, wxBORDER_NONE | wxBU_EXACTFIT);
-        auto* opt = new wxButton(panel, wxID_ANY, "Options", wxDefaultPosition, wxDefaultSize, wxBORDER_NONE | wxBU_EXACTFIT);
-        auto* abt = new wxButton(panel, wxID_ANY, "About", wxDefaultPosition, wxDefaultSize, wxBORDER_NONE | wxBU_EXACTFIT);
-        for (auto* b : {scan_, opt, abt}) bar->Add(b, 0, wxALL, FromDIP(3));
-        top->Add(bar, 0, wxLEFT, FromDIP(2));
         list_ = new wxListCtrl(panel, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxLC_REPORT | wxLC_SINGLE_SEL);
         list_->AppendColumn("Drive", wxLIST_FORMAT_LEFT, FromDIP(150));
         list_->AppendColumn("Model", wxLIST_FORMAT_LEFT, FromDIP(270));
@@ -385,9 +378,6 @@ public:
 
         list_->Bind(wxEVT_SIZE, [this](wxSizeEvent& e) { e.Skip(); CallAfter([this] { FitColumns(); }); });
         Bind(wxEVT_SHOW, [this](wxShowEvent& e) { e.Skip(); if (e.IsShown()) CallAfter([this] { FitColumns(); }); });
-        scan_->Bind(wxEVT_BUTTON, &MainFrame::OnScan, this);
-        opt->Bind(wxEVT_BUTTON, &MainFrame::OnOptions, this);
-        abt->Bind(wxEVT_BUTTON, &MainFrame::OnAbout, this);
         list_->Bind(wxEVT_LIST_ITEM_ACTIVATED, [this](wxListEvent& e) {
             long i = e.GetIndex();
             if (i >= 0 && i < static_cast<long>(rows_.size()) && rows_[i].kind == g::DisplayRow::ARRAY) Toggle(i);
@@ -417,7 +407,6 @@ public:
     void ShowScan(const std::vector<Result>& results, const std::vector<RaidArray>& arrays, bool have, bool scanning,
                   const std::string& status) {
         SetTitle(U(std::string("Hard Drive Monitor ") + GUI_VERSION + (scanning ? " - scanning..." : "")));
-        scan_->Enable(!scanning);
         SetStatusText(U(status));
         if (!have) return;
         results_ = results;
@@ -493,14 +482,10 @@ public:
 
 private:
     wxListCtrl* list_;
-    wxButton* scan_;
     std::vector<Result> results_;
     std::vector<RaidArray> arrays_;
     std::vector<g::DisplayRow> rows_;
     std::set<std::string> collapsed_;
-    void OnScan(wxCommandEvent&);
-    void OnOptions(wxCommandEvent&);
-    void OnAbout(wxCommandEvent&);
     void OnClose(wxCloseEvent&);
 };
 
@@ -613,9 +598,6 @@ void MainFrame::ShowDetails() {
     DetailsDialog dlg(this, results_[r.result]);
     dlg.ShowModal();
 }
-void MainFrame::OnScan(wxCommandEvent&) { wxGetApp().ScanNow(); }
-void MainFrame::OnOptions(wxCommandEvent&) { wxGetApp().CallAfter([] { wxGetApp().ShowOptions(); }); }
-void MainFrame::OnAbout(wxCommandEvent&) { wxGetApp().CallAfter([] { wxGetApp().ShowAbout(); }); }
 void MainFrame::OnClose(wxCloseEvent& e) {
     // Like the VB app: closing the window leaves the tray icon running. Without a tray, closing quits.
     if (wxTaskBarIcon::IsAvailable() && e.CanVeto()) { Hide(); e.Veto(); return; }
