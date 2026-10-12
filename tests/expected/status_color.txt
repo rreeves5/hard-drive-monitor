@@ -7,7 +7,7 @@
 [36m/dev/sdc  [0m  Samsung SSD 860 EVO 500GB   [2mS3Z1NB0SYNTH03  [0m  SSD   500 GB  31 C  21,877 h (2.5y)   1,544  [32m████████  94%[0m  [32m100%[0m  [32mOK      [0m
 
 [36mnvme1[0m[33m  WARNING[0m
-   [33m![0m Health score 38% is below 70% - mainly NVMe wear: 62% of rated write endurance used; Available spare 64% (threshold 10%)
+   [33m![0m Health score 38% is at or below 90% - mainly NVMe wear: 62% of rated write endurance used; Available spare 64% (threshold 10%)
 [36msdb[0m[1;31m  CRITICAL[0m
    [31m✖[0m 120 reallocated sectors - the drive is remapping bad spots to spare area
    [31m✖[0m 16 pending sectors - unreadable spots waiting to be remapped; data there may already be lost

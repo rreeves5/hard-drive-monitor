@@ -69,6 +69,8 @@ sudo = "auto"
 
 [alerts]
 desktop = true
+# warn_drop_percent: WARNING (yellow) once health has dropped this much (10 -> at 90% or less). 1-99.
+warn_drop_percent = 10
 
 [email]
 # Sent with the `curl` command-line tool (built into Windows 10+, macOS and most Linux distros).
@@ -103,12 +105,20 @@ devices = []
 auto_check = false
 )";
 
+json assess_thresholds(const json& cfg) {
+    json t = jget(cfg, "thresholds");
+    if (!t.is_object()) t = json::object();
+    const json& w = jget(jget(cfg, "alerts"), "warn_drop_percent");
+    if (w.is_number()) t["warn_drop_percent"] = w;
+    return t;
+}
+
 json default_config() {
     json c = json::object();
     c["smart"] = {{"source", "auto"}};
     c["raid"] = {{"enabled", true}, {"smartctl_devices", json::array()}};
     c["smartctl"] = {{"path", ""}, {"sudo", "auto"}};
-    c["alerts"] = {{"desktop", true}};
+    c["alerts"] = {{"desktop", true}, {"warn_drop_percent", 10}};
     c["email"] = {{"enabled", false}, {"host", ""}, {"port", 587}, {"starttls", true}, {"ssl", false},
                   {"username", ""}, {"password", ""}, {"password_env", "HDMON_SMTP_PASSWORD"},
                   {"from", ""}, {"to", json::array()}};

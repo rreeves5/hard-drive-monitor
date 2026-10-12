@@ -529,7 +529,7 @@ lower Performance. Temperature never changes Health either; it affects status an
 - **CRITICAL**: Health below 30%, SMART FAILED, an attribute failing now, NVMe critical warning / spare below
   threshold, wear at 100% or more, temperature at the critical limit, or a large count of one bad-sector
   type (10+ pending/offline/reported/media errors, 100+ reallocated).
-- **WARNING**: Health below 70%, or any of the counters above is non-zero, an attribute failed in the past,
+- **WARNING**: Health at or below `100 - warn_drop_percent` (`[alerts] warn_drop_percent`, default 10, so 90%; GUI Options "Warn when health drops by"), or any of the counters above is non-zero, an attribute failed in the past,
   CRC errors, NVMe spare close to its threshold, or temperature at the warning limit.
 - **OK**: none of the above. **UNKNOWN**: no SMART data (virtual disk, USB bridge, permissions).
 

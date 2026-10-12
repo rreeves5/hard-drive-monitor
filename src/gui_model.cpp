@@ -279,6 +279,8 @@ GuiSettings load_gui_settings(const json& cfg) {
     const json& g = jget(cfg, "gui");
     const json& a = jget(g, "alert_on_danger");
     if (a.is_boolean()) s.alert_on_danger = a.get<bool>();
+    if (const json& w = jget(jget(cfg, "alerts"), "warn_drop_percent"); w.is_number())
+        s.warn_drop_percent = std::max(1, std::min(99, w.get<int>()));
     if (auto n = opt_int(jget(g, "scan_interval_minutes"))) s.scan_interval_minutes = static_cast<int>(std::clamp<int64_t>(*n, 1, 1440));
     const json& u = jget(cfg, "update");
     s.auto_check = truthy(jget(u, "auto_check"));
@@ -290,7 +292,8 @@ bool save_gui_settings(const std::string& path, const GuiSettings& s, std::strin
     int n = std::clamp(s.scan_interval_minutes, 1, 1440);
     return set_config_value(path, "gui", "alert_on_danger", b(s.alert_on_danger), err) &&
            set_config_value(path, "gui", "scan_interval_minutes", std::to_string(n), err) &&
-           set_config_value(path, "update", "auto_check", b(s.auto_check), err);
+           set_config_value(path, "update", "auto_check", b(s.auto_check), err) &&
+           set_config_value(path, "alerts", "warn_drop_percent", std::to_string(std::max(1, std::min(99, s.warn_drop_percent))), err);
 }
 
 std::vector<int> fit_column_widths(const std::vector<int>& mins, const std::vector<int>& header, int avail, size_t slack) {

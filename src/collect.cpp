@@ -1,3 +1,4 @@
+#include "config.hpp"
 #include "collect.hpp"
 
 #include <algorithm>
@@ -13,7 +14,7 @@ namespace hdmon {
 
 std::vector<Result> score(const std::vector<Drive>& drives, const json& cfg) {
     std::vector<Result> out;
-    for (auto& d : drives) out.emplace_back(d, assess(d, jget(cfg, "thresholds")));
+    for (auto& d : drives) out.emplace_back(d, assess(d, assess_thresholds(cfg)));
     return out;
 }
 

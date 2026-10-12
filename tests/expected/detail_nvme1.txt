@@ -14,7 +14,7 @@
   Performance ███████████████████░ 97%
   Status      WARNING
 
-  WARNING  Health score 38% is below 70% - mainly NVMe wear: 62% of rated write endurance used; Available spare 64% (threshold 10%)
+  WARNING  Health score 38% is at or below 90% - mainly NVMe wear: 62% of rated write endurance used; Available spare 64% (threshold 10%)
   INFO     NVMe wear: 62% of rated write endurance used
   INFO     Available spare 64% (threshold 10%)
   INFO     Has spent 95 minutes above its warning/critical temperature (throttling)

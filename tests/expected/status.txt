@@ -7,7 +7,7 @@ DEVICE      MODEL                       SERIAL            TYPE    SIZE  TEMP    
 /dev/sdc    Samsung SSD 860 EVO 500GB   S3Z1NB0SYNTH03    SSD   500 GB  31 C  21,877 h (2.5y)   1,544  ████████  94%  100%  OK
 
 nvme1  WARNING
-   ! Health score 38% is below 70% - mainly NVMe wear: 62% of rated write endurance used; Available spare 64% (threshold 10%)
+   ! Health score 38% is at or below 90% - mainly NVMe wear: 62% of rated write endurance used; Available spare 64% (threshold 10%)
 sdb  CRITICAL
    ✖ 120 reallocated sectors - the drive is remapping bad spots to spare area
    ✖ 16 pending sectors - unreadable spots waiting to be remapped; data there may already be lost

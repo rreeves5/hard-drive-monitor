@@ -251,6 +251,13 @@ public:
         alert_->SetValue(s.alert_on_danger);
         top->Add(run_, 0, wxLEFT | wxRIGHT | wxTOP, pad);
         top->Add(alert_, 0, wxLEFT | wxRIGHT | wxTOP, pad);
+        auto* wr = new wxBoxSizer(wxHORIZONTAL);
+        wr->Add(new wxStaticText(this, wxID_ANY, "Warn when health drops by:"), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
+        drop_ = new wxSpinCtrl(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, wxSP_ARROW_KEYS, 1, 99,
+                               s.warn_drop_percent);
+        wr->Add(drop_, 0, wxALIGN_CENTER_VERTICAL);
+        wr->Add(new wxStaticText(this, wxID_ANY, "%"), 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(6));
+        top->Add(wr, 0, wxLEFT | wxRIGHT | wxTOP, pad);
         auto* row = new wxBoxSizer(wxHORIZONTAL);
         row->Add(new wxStaticText(this, wxID_ANY, "Scan every"), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
         interval_ = new wxSpinCtrl(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, wxSP_ARROW_KEYS, 1, 1440,
@@ -293,6 +300,7 @@ public:
     g::GuiSettings Result() const {
         g::GuiSettings s;
         s.alert_on_danger = alert_->GetValue();
+        s.warn_drop_percent = drop_->GetValue();
         s.scan_interval_minutes = interval_->GetValue();
         s.auto_check = check_->GetValue();
         return s;
@@ -301,6 +309,7 @@ public:
 private:
     wxCheckBox *run_, *alert_, *check_;
     wxSpinCtrl* interval_;
+    wxSpinCtrl* drop_;
     wxStaticText* status_;
 
     void SetStatus(const std::string& t) {

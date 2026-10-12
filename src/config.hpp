@@ -16,6 +16,8 @@ std::string config_path();
 
 extern const char* SAMPLE_CONFIG;
 json default_config();
+// [thresholds] plus [alerts] warn_drop_percent, as passed to assess().
+json assess_thresholds(const json& cfg);
 json parse_simple_toml(const std::string& text);   // [section] + key = string/int/float/bool/array
 json merge_config(const json& base, const json& over);
 json load_config(const std::string& path = "");     // defaults merged with the file (if present)

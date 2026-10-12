@@ -97,3 +97,20 @@ TEST_CASE("init-config writes once") {
     CHECK(run({"init-config", "--config", p, "--force"}).rc == 0);
 }
 }
+
+TEST_CASE("[alerts] warn_drop_percent: WARNING at health <= 100 - drop, never lowers CRITICAL") {
+    th::TempDir tmp;
+    std::string cfg = tmp.file("c.toml");
+    auto status_of = [&](const char* dev) {
+        json j = json::parse(run({"status", "--from-json", th::fix(), "--config", cfg, "--json"}).out);
+        for (auto& d : j["drives"]) if (d["drive"]["device"] == dev) return d["assessment"]["status"].get<std::string>();
+        return std::string();
+    };
+    write_file(cfg, "[alerts]\nwarn_drop_percent = 7\n");   // sdc is 94%: warn at <= 93 -> OK
+    CHECK(status_of("/dev/sdc") == "OK");
+    write_file(cfg, "[alerts]\nwarn_drop_percent = 6\n");   // 94 <= 94 -> WARNING
+    CHECK(status_of("/dev/sdc") == "WARNING");
+    CHECK(status_of("/dev/sdb") == "CRITICAL");
+    write_file(cfg, "[alerts]\nwarn_drop_percent = 99\n");
+    CHECK(status_of("/dev/sdb") == "CRITICAL");
+}

@@ -293,7 +293,7 @@ int cmd_detail(Ctx& c) {
             ref.name = dev;
             if (c.a.opt.count("--type")) ref.dev_type = c.a.get("--type");
             Drive d = read_drive(sc, ref);
-            hit = Result(d, assess(d, jget(c.cfg, "thresholds")));
+            hit = Result(d, assess(d, assess_thresholds(c.cfg)));
         }
     }
     if (!hit) {

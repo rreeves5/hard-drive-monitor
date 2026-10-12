@@ -22,7 +22,6 @@ static const int CAP_ATTRIBUTE_FAILING_NOW = 10;
 static const int CAP_NVME_SPARE_LOW = 10;
 static const int CAP_NVME_CRITICAL_WARNING = 20;
 static const int CRITICAL_BELOW = 30;
-static const int WARNING_BELOW = 70;
 // ---- Performance: (points per unit, max points)
 static const std::vector<std::tuple<const char*, double, double>> PERF_DEDUCTIONS = {
     {"udma_crc_errors", 1.0, 30}, {"command_timeout", 2.0, 30}, {"pending_sectors", 1.0, 20},
@@ -222,17 +221,21 @@ Assessment assess(const Drive& d, const json& thresholds) {
         for (auto& x : f) for (auto s : sevs) if (x.severity == s) return true;
         return false;
     };
+    // WARNING at health <= 100 - warn_drop_percent ([alerts] warn_drop_percent, default 10 -> 90%).
+    int drop = 10;
+    if (const json& w = jget(thresholds, "warn_drop_percent"); w.is_number()) drop = std::max(1, std::min(99, w.get<int>()));
+    const int warn_at = 100 - drop;
     std::string status = "OK";
     if (force_critical || score < CRITICAL_BELOW) {
         status = "CRITICAL";
         if (score < CRITICAL_BELOW && !force_critical && !any_sev({"critical"}))
             f.push_back({"critical", "Health score " + std::to_string(score) + "% is below " + std::to_string(CRITICAL_BELOW) + "% - back up and replace", std::string("health")});
-    } else if (score < WARNING_BELOW || defects) {
+    } else if (score <= warn_at || defects) {
         status = "WARNING";
         if (!any_sev({"warning", "critical"})) {
             std::vector<std::string> drivers;
             for (auto& x : f) if (x.metric && (*x.metric == "wear_percent_used" || *x.metric == "available_spare")) drivers.push_back(x.message);
-            f.push_back({"warning", "Health score " + std::to_string(score) + "% is below " + std::to_string(WARNING_BELOW) + "%" +
+            f.push_back({"warning", "Health score " + std::to_string(score) + "% is at or below " + std::to_string(warn_at) + "%" +
                                         (drivers.empty() ? "" : " - mainly " + join(drivers, "; ")), std::string("health")});
         }
     }
