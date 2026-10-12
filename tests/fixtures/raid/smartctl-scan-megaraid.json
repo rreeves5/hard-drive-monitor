@@ -1,0 +1,13 @@
+{
+  "json_format_version": [1, 0],
+  "_synthetic": "SYNTHETIC: shape of `smartctl --scan-open --json` (smartmontools 7.4) on a Linux host with an LSI MegaRAID 9361-8i",
+  "smartctl": {"version": [7, 4], "argv": ["smartctl", "--scan-open", "--json"], "exit_status": 0},
+  "devices": [
+    {"name": "/dev/sda", "info_name": "/dev/sda", "type": "scsi", "protocol": "SCSI"},
+    {"name": "/dev/bus/0", "info_name": "/dev/bus/0 [megaraid_disk_00]", "type": "megaraid,0", "protocol": "SCSI"},
+    {"name": "/dev/bus/0", "info_name": "/dev/bus/0 [megaraid_disk_01]", "type": "megaraid,1", "protocol": "SCSI"},
+    {"name": "/dev/bus/0", "info_name": "/dev/bus/0 [megaraid_disk_02] [SAT]", "type": "sat+megaraid,2", "protocol": "ATA"},
+    {"name": "/dev/bus/0", "info_name": "/dev/bus/0 [megaraid_disk_03] [SAT]", "type": "sat+megaraid,3", "protocol": "ATA"},
+    {"name": "/dev/nvme0", "info_name": "/dev/nvme0", "type": "nvme", "protocol": "NVMe"}
+  ]
+}

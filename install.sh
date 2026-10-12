@@ -5,8 +5,8 @@
 #   ./install.sh                install for the current user + schedule the hourly check
 #   ./install.sh --no-service   do not schedule anything (run `hdmon install-service` later)
 #   ./install.sh --system       also symlink hdmon into /usr/local/bin (uses sudo)
-#   ./install.sh --sudoers      add a sudoers rule so hdmon may run smartctl as root (asks for sudo)
-#   ./install.sh --no-sudoers   never ask about the sudoers rule
+#   ./install.sh --setcap       Linux: let hdmon read SMART without sudo (setcap, asks for sudo)
+#   ./install.sh --no-setcap    never ask about it
 #   ./install.sh --binary FILE  install this hdmon binary
 #   ./install.sh --build        always build from source with CMake
 #   ./install.sh --no-gui       skip the desktop app (hdmon-gui / Hard Drive Monitor.app) even if present
@@ -26,7 +26,7 @@ STATE_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/hard-drive-monitor"
 BIN="$HOME/.local/bin"
 SYSTEM=0
 SERVICE=1
-SUDOERS=ask
+CAPS=ask
 BINARY=""
 FORCE_BUILD=0
 AUTO_UPDATE=0
@@ -36,8 +36,8 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --system) SYSTEM=1 ;;
     --no-service) SERVICE=0 ;;
-    --sudoers) SUDOERS=yes ;;
-    --no-sudoers) SUDOERS=no ;;
+    --setcap|--sudoers) CAPS=yes ;;        # --sudoers: old name (0.2.3 and earlier added a smartctl sudoers rule)
+    --no-setcap|--no-sudoers) CAPS=no ;;
     --binary) shift; BINARY="${1:-}" ;;
     --binary=*) BINARY="${1#--binary=}" ;;
     --build) FORCE_BUILD=1 ;;
@@ -124,62 +124,6 @@ fi
 
 say "Installed: $("$BIN/hdmon" --version)  ($METHOD, $BIN/hdmon)"
 
-# --- SMART needs root: optional sudoers rule for smartctl only
-SMARTCTL="$(command -v smartctl 2>/dev/null || true)"
-for c in /usr/sbin/smartctl /usr/local/sbin/smartctl /opt/homebrew/bin/smartctl /usr/local/bin/smartctl; do
-  [ -z "$SMARTCTL" ] && [ -x "$c" ] && SMARTCTL="$c"
-done
-if [ -z "$SMARTCTL" ]; then
-  if [ "$(uname -s)" = "Darwin" ]; then hint="brew install smartmontools"; else hint="sudo apt install smartmontools  (dnf/pacman: smartmontools)"; fi
-  say "smartmontools is not installed yet: $hint"
-  say "Then re-run ./install.sh (or add the sudoers rule from README.md) so the background check can read SMART."
-else
-  RULE="$(id -un) ALL=(root) NOPASSWD: $SMARTCTL"
-  SUDOERS_FILE=/etc/sudoers.d/hard-drive-monitor
-  if [ "$SUDOERS" = ask ]; then
-    if [ -f "$SUDOERS_FILE" ]; then
-      SUDOERS=no; echo "sudoers=$SUDOERS_FILE" >> "$STATE_DIR/install-state"
-      say "sudoers rule already present ($SUDOERS_FILE)"
-    elif [ -t 0 ]; then
-      echo
-      echo "Reading SMART data needs root. The background check runs as you, so it can only read"
-      echo "your drives if it may run smartctl via sudo without a password. Optional rule:"
-      echo "    $RULE"
-      echo "(it allows smartctl only, with any arguments; written to $SUDOERS_FILE)"
-      printf "Add this sudoers rule now? [y/N] "
-      read -r ans || ans=""
-      case "$ans" in y|Y|yes|YES) SUDOERS=yes ;; *) SUDOERS=no ;; esac
-    else SUDOERS=no; fi
-  fi
-  if [ "$SUDOERS" = yes ]; then
-    if ! command -v visudo >/dev/null 2>&1 && [ ! -x /usr/sbin/visudo ]; then
-      say "visudo not found, so I will not write an unvalidated sudoers file. Add this line yourself"
-      say "with: sudo visudo -f $SUDOERS_FILE"
-      echo "    $RULE"
-    else
-      VISUDO="$(command -v visudo 2>/dev/null || echo /usr/sbin/visudo)"
-      tmp="$(mktemp)"; printf '%s\n' "$RULE" > "$tmp"
-      if sudo "$VISUDO" -cf "$tmp" >/dev/null; then
-        sudo install -m 0440 -o root -g "$(id -gn root 2>/dev/null || echo 0)" "$tmp" "$SUDOERS_FILE"
-        echo "sudoers=$SUDOERS_FILE" >> "$STATE_DIR/install-state"
-        say "Added $SUDOERS_FILE ($RULE)"
-      else
-        say "sudoers rule failed validation; not installed"
-      fi
-      rm -f "$tmp"
-    fi
-  elif [ ! -f "$SUDOERS_FILE" ]; then
-    if [ "$(uname -s)" = "Darwin" ]; then
-      say "No sudoers rule: the internal Apple SSD usually still works; other disks need sudo. Options:"
-      echo "    ./install.sh --sudoers                 (smartctl-only sudoers rule)"
-      echo "    hdmon install-service --system         (prints a root LaunchDaemon you can install)"
-    else
-      say "No sudoers rule: the background check will show drives as UNKNOWN until you add one:"
-      echo "    ./install.sh --sudoers     (or see 'smartctl needs root' in README.md)"
-    fi
-  fi
-fi
-
 # --- schedule the background check (on by default)
 if [ "$SERVICE" = 1 ]; then
   say "Scheduling the background check (hourly + at login/boot)"
@@ -229,6 +173,46 @@ install_gui() {
   say "Installed the desktop app: $BIN/hdmon-gui (menu entry: Hard Drive Monitor)"
 }
 if [ "$GUI" = 1 ]; then install_gui; else say "Skipped the desktop app (--no-gui)."; fi
+
+# --- SMART access. hdmon reads SMART natively (no smartmontools needed).
+# Linux: the raw ATA/NVMe commands need root or three capabilities on the binary. Granting them lets the
+#        background check (which runs as you) read the drives; nothing else on the system changes.
+# macOS: IOKit reads internal drives without root; nothing to set up.
+CAP_SET="cap_sys_rawio,cap_sys_admin,cap_dac_read_search+ep"
+if [ "$OS" = linux ]; then
+  SETCAP="$(command -v setcap 2>/dev/null || true)"
+  for c in /usr/sbin/setcap /sbin/setcap; do [ -z "$SETCAP" ] && [ -x "$c" ] && SETCAP="$c"; done
+  targets="$BIN/hdmon"
+  [ -x "$BIN/hdmon-gui" ] && targets="$targets $BIN/hdmon-gui"
+  if [ "$CAPS" = ask ]; then
+    if [ -t 0 ]; then
+      echo
+      echo "Reading SMART data needs root. The background check runs as you, so it can only read your"
+      echo "drives if the hdmon binary has these capabilities (raw disk commands only; no sudo rule needed):"
+      echo "    sudo setcap $CAP_SET $targets"
+      printf "Grant them now? [y/N] "
+      read -r ans || ans=""
+      case "$ans" in y|Y|yes|YES) CAPS=yes ;; *) CAPS=no ;; esac
+    else CAPS=no; fi
+  fi
+  if [ "$CAPS" = yes ]; then
+    if [ -z "$SETCAP" ]; then
+      say "setcap not found (Debian/Ubuntu: sudo apt install libcap2-bin; Fedora: libcap; Arch: libcap)."
+    else
+      ok=1
+      for t in $targets; do sudo "$SETCAP" "$CAP_SET" "$t" || ok=0; done
+      if [ "$ok" = 1 ]; then echo "caps=1" >> "$STATE_DIR/install-state"; say "Granted SMART access to: $targets"
+      else say "setcap failed (is $BIN on a filesystem mounted nosuid?). Run hdmon with sudo instead."; fi
+    fi
+  else
+    say "No capabilities granted: run 'sudo hdmon status', or later: ./install.sh --setcap"
+    echo "    (or by hand: sudo setcap $CAP_SET \"$BIN/hdmon\")"
+  fi
+fi
+SMARTCTL="$(command -v smartctl 2>/dev/null || true)"
+if [ -n "$SMARTCTL" ]; then
+  say "smartmontools found ($SMARTCTL): used only as a fallback for drives the native read cannot handle."
+fi
 
 # --- automatic update checks: OFF unless --enable-auto-update was given (never turned on silently)
 if [ "$AUTO_UPDATE" = 1 ]; then

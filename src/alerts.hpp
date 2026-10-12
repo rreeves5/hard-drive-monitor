@@ -12,6 +12,9 @@ struct Alert { std::string severity, title, body; };
 
 std::string drive_label(const Drive& d);
 std::vector<Alert> build_alerts(const std::vector<Result>& results, const Changes& changes);
+// RAID: degraded / failed / rebuild started / rebuild complete (array_changes from History::record).
+std::vector<Alert> build_array_alerts(const std::vector<RaidArray>& arrays, const std::vector<Result>& results,
+                                      const Changes& array_changes);
 std::pair<bool, std::string> notify_desktop(const std::string& title, const std::string& body);
 std::pair<bool, std::string> send_email(const json& cfg, const std::string& subject, const std::string& body);
 std::vector<std::string> dispatch(const json& cfg, const std::vector<Alert>& alerts);

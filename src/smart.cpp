@@ -378,11 +378,8 @@ static void fill_missing(DeviceRef& dst, const DeviceRef& src) {
     if (dst.volumes.empty()) dst.volumes = src.volumes;
 }
 
-static std::vector<DeviceRef> scan_devices(Smartctl* sc, const char* flag) {
+std::vector<DeviceRef> parse_scan(const json& data) {
     std::vector<DeviceRef> refs;
-    if (!sc) return refs;
-    json data; std::string err;
-    sc->run({flag, "--json"}, data, err, 60);
     const json& devs = jget(data, "devices");
     if (devs.is_array()) for (auto& dv : devs) {
         DeviceRef r;
@@ -394,6 +391,14 @@ static std::vector<DeviceRef> scan_devices(Smartctl* sc, const char* flag) {
     }
     return refs;
 }
+
+std::vector<DeviceRef> scan_refs(Smartctl* sc, const char* flag) {
+    if (!sc) return {};
+    json data; std::string err;
+    sc->run({flag, "--json"}, data, err, 60);
+    return parse_scan(data);
+}
+static std::vector<DeviceRef> scan_devices(Smartctl* sc, const char* flag) { return scan_refs(sc, flag); }
 
 static std::vector<DeviceRef> discover_linux(Smartctl* sc) {
     auto refs = scan_devices(sc, "--scan-open");
@@ -514,6 +519,8 @@ std::vector<Drive> load_json_files(const std::vector<std::string>& paths) {
         if (!file_exists(f)) throw std::runtime_error("no such file: " + f);
         json data = json::parse(read_file(f), nullptr, false);
         if (data.is_discarded()) throw std::runtime_error("not valid JSON: " + f);
+        if (data.is_object() && (data.contains("StoragePools") ||
+                                 (data.contains("devices") && !data.contains("device")))) continue;   // RAID fixtures (raid.cpp)
         if (data.is_object() && data.contains("PhysicalDisks")) {
             for (auto& d : parse_windows_physical(data)) { d.source = "file:" + basename(f); drives.push_back(d); }
             continue;
@@ -620,8 +627,8 @@ std::optional<int64_t> windows_disk_number(const std::string& device, const std:
         }
     }
     std::smatch m;
-    static const std::regex pd(R"(/dev/pd(\d+)$)"), sd(R"(/dev/sd([a-z]+)$)");
-    if (std::regex_match(device, m, pd)) return std::stoll(m[1]);
+    static const std::regex pd(R"(/dev/pd(\d+)$)"), sd(R"(/dev/sd([a-z]+)$)"), phys(R"(^PhysicalDrive(\d+)$)");
+    if (std::regex_match(device, m, pd) || std::regex_match(device, m, phys)) return std::stoll(m[1]);
     if (std::regex_match(device, m, sd)) {
         int64_t n = 0;
         for (char ch : std::string(m[1])) n = n * 26 + (ch - 96);
@@ -673,7 +680,7 @@ std::vector<Drive> parse_windows_physical(const json& inv) {
             d.notes.push_back("Reliability counters unavailable (run as Administrator, or the driver does not expose them)");
         }
         if ((!rel.is_object() || rel.empty()) && !d.smart_passed) d.smart_available = false;
-        d.notes.push_back("Windows Storage fallback: fewer attributes than smartctl. Install smartmontools for the full SMART view.");
+        d.notes.push_back("Windows Storage fallback: fewer attributes than native SMART. Run as Administrator for the full SMART view.");
         json clean = json::object();
         for (auto it = m.begin(); it != m.end(); ++it) if (!it.value().is_null()) clean[it.key()] = it.value();
         d.metrics = clean;

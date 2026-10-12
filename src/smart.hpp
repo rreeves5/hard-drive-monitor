@@ -75,6 +75,8 @@ int64_t ata_raw_count(int attr_id, const json& raw, bool* ok = nullptr);
 Drive parse_smartctl(const json& data, const std::string& device = "");
 
 std::vector<DeviceRef> discover(Smartctl* sc);
+std::vector<DeviceRef> parse_scan(const json& scan_json);           // `smartctl --scan(-open) --json`
+std::vector<DeviceRef> scan_refs(Smartctl* sc, const char* flag);   // runs it
 Drive read_drive(Smartctl& sc, const DeviceRef& ref);
 std::string elevation_hint();
 std::vector<Drive> load_json_files(const std::vector<std::string>& paths);

@@ -31,4 +31,4 @@ PhysicalDrive0  Samsung SSD 970 EVO Plus 1TB
     ReadLatencyMax              1012
     WriteLatencyMax             2210
 
-  note: Windows Storage fallback: fewer attributes than smartctl. Install smartmontools for the full SMART view.
+  note: Windows Storage fallback: fewer attributes than native SMART. Run as Administrator for the full SMART view.

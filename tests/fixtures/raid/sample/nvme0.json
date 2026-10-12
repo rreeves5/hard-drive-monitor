@@ -1,0 +1,119 @@
+{
+  "json_format_version": [
+    1,
+    0
+  ],
+  "smartctl": {
+    "version": [
+      7,
+      4
+    ],
+    "svn_revision": "5530",
+    "platform_info": "x86_64-linux-synthetic",
+    "build_info": "(synthetic)",
+    "argv": [
+      "smartctl",
+      "-x",
+      "--json",
+      "/dev/nvme0"
+    ],
+    "exit_status": 0
+  },
+  "local_time": {
+    "time_t": 1791748800,
+    "asctime": "Sun Oct 11 12:00:00 2026 EDT"
+  },
+  "device": {
+    "name": "/dev/nvme0",
+    "info_name": "/dev/nvme0 [NVME]",
+    "type": "nvme",
+    "protocol": "NVMe"
+  },
+  "_synthetic": "SYNTHETIC test fixture hand-written for Hard Drive Monitor. Not captured from a real drive.",
+  "model_name": "Samsung SSD 970 EVO Plus 1TB",
+  "serial_number": "S4EWNX0SYNTH04",
+  "firmware_version": "2B2QEXM7",
+  "nvme_pci_vendor": {
+    "id": 5197,
+    "subsystem_id": 5197
+  },
+  "nvme_total_capacity": 1000204886016,
+  "nvme_unallocated_capacity": 0,
+  "nvme_namespaces": [
+    {
+      "id": 1,
+      "size": {
+        "blocks": 1953525168,
+        "bytes": 1000204886016
+      }
+    }
+  ],
+  "user_capacity": {
+    "blocks": 1953525168,
+    "bytes": 1000204886016
+  },
+  "logical_block_size": 512,
+  "smart_support": {
+    "available": true,
+    "enabled": true
+  },
+  "smart_status": {
+    "passed": true,
+    "nvme": {
+      "value": 0
+    }
+  },
+  "nvme_smart_health_information_log": {
+    "critical_warning": 0,
+    "temperature": 38,
+    "available_spare": 100,
+    "available_spare_threshold": 10,
+    "percentage_used": 3,
+    "data_units_read": 62500000,
+    "data_units_written": 31250000,
+    "host_reads": 512331812,
+    "host_writes": 389112033,
+    "controller_busy_time": 1832,
+    "power_cycles": 890,
+    "power_on_hours": 5120,
+    "unsafe_shutdowns": 14,
+    "media_errors": 0,
+    "num_err_log_entries": 0,
+    "warning_temp_time": 0,
+    "critical_comp_time": 0,
+    "temperature_sensors": [
+      38,
+      44
+    ]
+  },
+  "temperature": {
+    "current": 38
+  },
+  "power_cycle_count": 890,
+  "power_on_time": {
+    "hours": 5120
+  },
+  "nvme_self_test_log": {
+    "current_self_test_operation": {
+      "value": 0,
+      "string": "No self-test in progress"
+    },
+    "table": [
+      {
+        "self_test_code": {
+          "value": 1,
+          "string": "Short"
+        },
+        "self_test_result": {
+          "value": 0,
+          "string": "Completed without error"
+        },
+        "power_on_hours": 5090
+      }
+    ]
+  },
+  "_volumes": [
+    "/",
+    "/boot/efi"
+  ]
+}

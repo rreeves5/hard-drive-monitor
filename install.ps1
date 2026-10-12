@@ -159,10 +159,10 @@ $exe = Join-Path $BinDir 'hdmon.exe'
 $ver = & $exe --version
 Say "Installed: $ver ($Method, $exe)"
 $IsAdmin = Test-Admin
-if (-not (Get-Command smartctl -ErrorAction SilentlyContinue) -and
-    -not (Test-Path "$env:ProgramFiles\smartmontools\bin\smartctl.exe")) {
-    Say 'smartmontools is not installed yet: winget install smartmontools.smartmontools  (or: choco install smartmontools)'
-    Say 'Until then Hard Drive Monitor uses the Windows Storage counters (fewer attributes).'
+# SMART is read natively (DeviceIoControl); smartmontools is not needed. If it is installed it is used only
+# as a fallback for drives the native read cannot handle (and for some hardware RAID cards).
+if ((Get-Command smartctl -ErrorAction SilentlyContinue) -or (Test-Path "$env:ProgramFiles\smartmontools\bin\smartctl.exe")) {
+    Say 'smartmontools found: used only as an optional fallback.'
 }
 
 # --- background check (on by default): Task Scheduler, at logon + hourly
@@ -175,9 +175,9 @@ if ($NoService) {
         $state | Add-Member -NotePropertyName service -NotePropertyValue $true -Force
         $state | ConvertTo-Json | Set-Content -Path $StateFile -Encoding UTF8
         if (-not $IsAdmin) {
-            Write-Warning ('This window is not elevated, so the task runs without admin rights and smartctl cannot ' +
-                           'open the drives. For full SMART data re-run install.ps1 (or hdmon install-service) ' +
-                           'from an elevated PowerShell (Run as Administrator).')
+            Write-Warning ('This window is not elevated, so the task runs without admin rights and cannot open the ' +
+                           'drives for full SMART data (it falls back to the Windows Storage counters). For full SMART ' +
+                           'data re-run install.ps1 (or hdmon install-service) from an elevated PowerShell (Run as Administrator).')
         }
     } else {
         Write-Warning 'Could not create the scheduled task (see the message above).'
@@ -229,7 +229,7 @@ if ($EnableAutoUpdate) {
 Write-Host ''
 Write-Host 'Open a NEW Command Prompt or PowerShell window, then run:'
 Write-Host '  hdmon status'
-Write-Host 'Use an elevated (Run as Administrator) window so smartctl can read the drives.'
+Write-Host 'Use an elevated (Run as Administrator) window for full SMART data.'
 Write-Host 'Turn the background check off with:  hdmon uninstall-service'
 Write-Host 'Remove everything with:              powershell -ExecutionPolicy Bypass -File .\uninstall.ps1'
 exit 0

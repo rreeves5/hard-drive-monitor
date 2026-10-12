@@ -1,8 +1,9 @@
 # Hard Drive Monitor
 
 **Hard Drive Monitor** (`hdmon`) is a small command-line health monitor for hard drives, SATA SSDs and NVMe
-drives on **Linux, macOS and Windows**, in the spirit of Hard Disk Sentinel. It reads SMART data with
-[smartmontools](https://www.smartmontools.org/) (`smartctl --json`, version 7 or newer), turns it into a
+drives on **Linux, macOS and Windows**, in the spirit of Hard Disk Sentinel. It reads SMART data
+**natively through the operating system** (no smartmontools or other tools needed, see
+[Native SMART](#native-smart-no-smartmontools-needed)), watches **RAID arrays** (see [RAID](#raid)), turns it into a
 **Health %**, a **Performance %** and an **OK / WARNING / CRITICAL** status with plain-English reasons, keeps a
 local history, and alerts you when something gets worse.
 
@@ -29,9 +30,8 @@ Desktop app (tray icon + window, see [Desktop app](#desktop-app-hdmon-gui)):
 | macOS (Apple Silicon + Intel) | [`Hard-Drive-Monitor-macos.zip`](https://github.com/rreeves5/hard-drive-monitor/releases/latest/download/Hard-Drive-Monitor-macos.zip) (contains `Hard Drive Monitor.app`) |
 | Linux (x86_64, needs GTK 3) | [`hdmon-gui-linux-x86_64`](https://github.com/rreeves5/hard-drive-monitor/releases/latest/download/hdmon-gui-linux-x86_64) |
 
-`SHA256SUMS.txt` in the release lists checksums. You still need smartmontools installed
-(`winget install smartmontools.smartmontools`, `brew install smartmontools`, or `sudo apt install smartmontools`).
-To put `hdmon` on your PATH and turn on the background check, use the installer below.
+`SHA256SUMS.txt` in the release lists checksums. Nothing else is needed at run time (smartmontools is no longer
+required). To put `hdmon` on your PATH and turn on the background check, use the installer below.
 
 ## Quick install
 
@@ -46,8 +46,8 @@ Run from a clone or the unzipped folder. Each installer copies the prebuilt `hdm
 | Windows | `powershell -ExecutionPolicy Bypass -File .\install.ps1` (in an **elevated** PowerShell for full SMART access) |
 
 Opt out of the background check with `./install.sh --no-service` or `install.ps1 -NoService`. Undo
-everything with `./uninstall.sh` or `.\uninstall.ps1`. You also need smartmontools (`sudo apt install
-smartmontools`, `brew install smartmontools`, or `winget install smartmontools.smartmontools`).
+everything with `./uninstall.sh` or `.\uninstall.ps1`. On Linux the installer offers to let `hdmon` read SMART
+without sudo (`--setcap`, see [SMART access](#smart-access-root--admin)).
 
 ![hdmon status (synthetic demo data)](demo-status.png)
 
@@ -60,13 +60,12 @@ smartmontools`, `brew install smartmontools`, or `winget install smartmontools.s
 
 ## Features
 
-- Drive discovery
-  - Linux: `smartctl --scan-open --json` plus `lsblk` (so disks smartctl skips still show up)
-  - macOS: `smartctl --scan` plus `diskutil list` (physical disks only)
-  - Windows: `smartctl --scan`; **if smartctl is not installed**, falls back to PowerShell
-    `Get-PhysicalDisk` + `Get-StorageReliabilityCounter` (wear, temperature, read/write errors, power-on hours).
-    Drive letters are mapped to physical disks with `Get-Partition` / `Get-Disk` (matched by serial number,
-    then by smartctl's `/dev/sdX` = `PhysicalDriveN` naming), so you see e.g. `/dev/sdb (D:)`.
+- Drive discovery (native, no external programs)
+  - Linux: `/sys/block` (whole disks; partitions, loop, zram and md devices skipped), mount points from `/proc/mounts`
+  - macOS: IOKit (physical disks; APFS containers are mapped back to the disk they live on)
+  - Windows: `\\.\PhysicalDriveN` + `IOCTL_STORAGE_GET_DEVICE_NUMBER` for drive letters, so you see e.g.
+    `PhysicalDrive1 (D:)`. Without admin rights it uses the Windows Storage WMI classes (`MSFT_PhysicalDisk` +
+    `MSFT_StorageReliabilityCounter`: wear, temperature, read/write errors, power-on hours).
 - SATA/ATA HDDs and SSDs, and NVMe. Shows model, serial, capacity, type, temperature, power-on hours, power cycles and:
   - ATA: reallocated sectors (5), reported uncorrectable (187), command timeout (188), pending sectors (197),
     offline uncorrectable (198), UDMA CRC errors (199), SSD wear (device statistics or attributes 231/233/202/169/177)
@@ -76,7 +75,8 @@ smartmontools`, `brew install smartmontools`, or `winget install smartmontools.s
 
 | Command | What it does |
 |---|---|
-| `hdmon status` | Colored table of all drives, plus reasons for anything not OK. Records the run to history. |
+| `hdmon status` (or `hdmon list`) | Colored table of all drives and RAID arrays (members indented under their array), plus reasons for anything not OK. Records the run to history. |
+| `hdmon raid` | RAID arrays only: type, backend, state, rebuild %, size and every member with its health. Exit code 0/1/2 by the worst array. |
 | `hdmon detail <dev>` | Full attribute view: every ATA attribute, the NVMe health log, self-test log. `<dev>` can be `/dev/sda`, `sda`, `nvme0`, `disk0`, a serial number, or a Windows drive letter like `D:`. |
 | `hdmon history` | Health/temperature sparklines from the SQLite log and every counter that got worse. |
 | `hdmon check` | One scheduled-style run: record, alert on worsening, exit code 0/1/2 = OK/WARNING/CRITICAL (3 = error). |
@@ -87,9 +87,68 @@ smartmontools`, `brew install smartmontools`, or `winget install smartmontools.s
 | `hdmon alert-test` | Sends a test notification (and e-mail, if enabled). |
 | `hdmon update [--check]` | Looks for a newer GitHub release; installs it (checksum-verified) only when you run it. See [Updates](#updates). |
 
-- `--from-json FILE_OR_DIR` (status, detail, check, watch, selftest --results): read saved
-  `smartctl -x --json` output instead of live drives. Useful for demos, for checking a drive from another
+- `--from-json FILE_OR_DIR` (status, detail, check, watch, raid, selftest --results): read saved
+  `smartctl -x --json` output (and RAID sources such as a saved `/proc/mdstat`, see `tests/fixtures/raid/`)
+  instead of live drives. Useful for demos, for checking a drive from another
   machine, or for bug reports. A `--from-json` run is **not** written to history unless you add `--record`.
+
+## Native SMART (no smartmontools needed)
+
+Since 0.2.4 `hdmon` and `hdmon-gui` read SMART data themselves, through the operating system:
+
+| OS | ATA / SATA (incl. USB bridges that support SAT) | NVMe |
+|---|---|---|
+| Linux | `SG_IO` ATA PASS-THROUGH(16) (12-byte CDB as fallback): IDENTIFY, SMART READ DATA, READ THRESHOLDS, RETURN STATUS | `NVME_IOCTL_ADMIN_CMD`: Identify Controller + Get Log Page 02h |
+| Windows | `IOCTL_ATA_PASS_THROUGH` (falls back to `SMART_RCV_DRIVE_DATA`) | `IOCTL_STORAGE_QUERY_PROPERTY` / `StorageDeviceProtocolSpecificProperty` (Identify + log page 02h) |
+| macOS | IOKit `IOATASMARTInterface` | IOKit NVMe SMART interface (internal NVMe) |
+
+The raw sectors are decoded into the same attribute model the smartctl path used, and scored by the same code,
+so health scores and statuses are identical. This was checked byte for byte on a real Linux kernel with
+emulated AHCI and NVMe drives (`tools/vm-verify/`, captures in `tests/fixtures/native/qemu/`): native and
+`smartctl -x --json` gave the same attributes, raw values, health and status.
+
+- **Which source was used** is always shown: the `Source:` line under `hdmon status`, `Source:` in
+  `hdmon detail`, `"source"` per drive in `--json`, and the GUI status line. Values are `native (SG_IO ATA
+  PASS-THROUGH(16))`, `native (NVMe admin ioctl)`, `native (DeviceIoControl ...)`, `smartctl (...)`, or
+  `windows-storage` (WMI reliability counters).
+- **smartmontools is optional.** With `[smart] source = "auto"` (default), smartctl is used only when it happens
+  to be installed and the native read fails for a drive (SAS disks, unusual USB bridges), and for disks behind
+  hardware RAID controllers. `source = "native"` never runs it; `source = "smartctl"` uses only smartctl.
+  smartmontools is credited in the GUI's About box only when the fallback was actually used.
+- `HDMON_NATIVE_DUMP=<dir> hdmon status` writes the raw sectors it read (`*-identify.bin`, `*-smart-data.bin`,
+  `*-nvme-log02.bin`, ...) for bug reports.
+
+## RAID
+
+`hdmon status`, `hdmon check`, `hdmon raid` and the desktop app show RAID arrays as their own rows, with the
+member disks indented underneath. A disk that belongs to an array is listed only under it, never twice.
+
+| Backend | How it is read | Notes |
+|---|---|---|
+| Linux md (mdadm) | `/proc/mdstat` + `/sys/block/md*/md/` (level, array_state, degraded, sync_action, sync_completed, per-member state/slot) | `mdadm --detail` only as an optional extra |
+| Windows Storage Spaces | WMI `root\Microsoft\Windows\Storage`: `MSFT_StoragePool`, `MSFT_VirtualDisk`, `MSFT_PhysicalDisk`, `MSFT_StorageJob` (repair %) | PowerShell `Get-StoragePool`/`Get-VirtualDisk`/... only if WMI fails |
+| Intel RST / VMD | RAID volumes show up as virtual disks; member state from `rstcli`/`IntelVROCCli` when installed | members behind RST are not visible to SMART without the vendor driver |
+| macOS AppleRAID | `diskutil appleRAID list` | mirror/stripe/concat, rebuild % |
+| Hardware RAID cards | `smartctl --scan-open` members (`-d megaraid,N`, `aacraid`, `areca`, `3ware`, `cciss`, `hpt`, `sssraid`, `jmb39x`) grouped per controller | needs smartmontools; logical-drive state needs the vendor tool, so the array shows the worst member |
+
+- **Array model:** name, type/level, backend, state (OK / DEGRADED / REBUILDING / FAILED), rebuild %, size and
+  members (role: active, spare, failed, rebuilding, missing).
+- **Health rollup:** an array's status is the worst of its own state and its members' SMART status.
+  DEGRADED and REBUILDING are WARNING, FAILED is CRITICAL, and a degraded mirror with a critical member is
+  CRITICAL. The tray colour counts arrays too.
+- **Alerts** (`hdmon check`, the background check and the desktop app): an array becoming degraded or failed,
+  a rebuild starting, and a rebuild completing. Array state is recorded in the same history database
+  (`array_readings` table).
+- **JSON:** `hdmon status --json` has an `arrays` list (state, rebuild_percent, status, members with their
+  drive keys).
+- **Config:** `[raid] enabled = false` hides arrays. `[raid] smartctl_devices = ["/dev/sg0 -d cciss,0"]` adds
+  controller members that `--scan-open` does not find.
+- Sample data: `hdmon status --from-json tests/fixtures/raid/sample` (a degraded md mirror with one critical
+  member, plus a MegaRAID controller). Parser fixtures for every backend are in `tests/fixtures/raid/`.
+
+| Main window with RAID | RAID details |
+|---|---|
+| ![Main window with a degraded mirror](docs/gui-main.png) | ![RAID details](docs/gui-raid.png) |
 
 ## Desktop app (hdmon-gui)
 
@@ -106,14 +165,17 @@ behaviour on Windows, macOS and Linux. The `hdmon` command is unchanged; the app
 | **About** | **Windows build (running under Wine)** |
 | ![About](docs/gui-about.png) | ![Windows build under Wine](docs/gui-windows-wine.png) |
 
-*Screenshots use the synthetic test drives (`hdmon-gui --from-json tests/fixtures`) on Linux/GTK under Xvfb,
-regenerated with `tools/gui_screenshots.sh`. The Windows one is the cross-compiled exe running under Wine.*
+*Screenshots use the synthetic test drives (`hdmon-gui --from-json tests/fixtures`; the main window and RAID
+details use `tests/fixtures/raid/sample`) on Linux/GTK under Xvfb, regenerated with `tools/gui_screenshots.sh`. The Windows one is the cross-compiled exe running under Wine.*
 
 - **Tray icon:** a plain circle in the colour of the **worst** drive. Green = OK, yellow = WARNING, red =
   CRITICAL, gray = no data/no SMART. Statuses come from the same scoring as `hdmon status`. Hover to see each
   drive (letter, mount point or device) with its health %. Right-click (on macOS, click) for **Open, Scan Now,
   Options, About, Exit**. Double-click opens the window.
 - **Window:** one row per drive (Drive, Model, Size, Temp, Health), each tinted with its own status colour.
+  RAID arrays get a **bold** row in the array's status colour with a ▼/▶ arrow (click it, double-click the row, or
+  right-click > Collapse/Expand) and the state in the Health column ("Degraded", "Rebuilding 45.0%"); their
+  member disks are indented underneath. Right-click > Details on an array shows its members and state.
   Double-click a row (or right-click > Details) for the details: the counters the drive reports plus the full
   `hdmon detail` report. The title bar and status line show when a scan is running.
 - **Scans** every 60 minutes by default (Options > Scan every N minutes) and on **Scan Now**. Every scan goes into
@@ -132,8 +194,8 @@ regenerated with `tools/gui_screenshots.sh`. The Windows one is the cross-compil
   - Linux: `~/.config/autostart/hard-drive-monitor.desktop`.
 - **Admin rights:**
   - Windows: `hdmon-gui.exe` asks for elevation on start, like Disk Monitor did (embedded manifest with
-    `requireAdministrator`). Without smartmontools it falls back to the Windows Storage counters.
-  - Linux/macOS: the same `sudo` rules as the CLI apply (see [smartctl needs root](#smartctl-needs-root-sudo-notes)).
+    `requireAdministrator`). Without admin it falls back to the Windows Storage counters.
+  - Linux/macOS: the same rules as the CLI apply (see [SMART access](#smart-access-root--admin)).
     Drives it can't read show up gray, and the status line explains why.
 - **Command line:** `hdmon-gui [--show] [--from-json DIR] [--config FILE] [--db FILE] [--version]`. `--show` opens
   the window at start; otherwise the app starts in the tray, like Disk Monitor. If the desktop has no tray
@@ -153,7 +215,7 @@ regenerated with `tools/gui_screenshots.sh`. The Windows one is the cross-compil
 
 ## Install
 
-You need smartmontools 7.0+ (`smartctl`). Nothing else at run time.
+Nothing is needed at run time: SMART is read natively. smartmontools is optional (fallback only).
 
 Prebuilt binaries (also attached to GitHub releases by CI for `v*` tags):
 
@@ -173,8 +235,9 @@ Prebuilt binaries (also attached to GitHub releases by CI for `v*` tags):
 2. Copies it to `~/.local/bin/hdmon` (atomic replace, so it is safe while the background check runs).
 3. Puts `~/.local/bin` on PATH with a marked block in `~/.profile`, `~/.bashrc`, `~/.bash_profile` (if it
    exists) and `~/.zshrc` (if it exists, always on macOS). Running it again does not add duplicates.
-4. Offers a **smartctl-only sudoers rule** (asks interactively; `--sudoers` / `--no-sudoers` to decide up front).
-   It is validated with `visudo` before it is installed, and never written without `visudo`.
+4. Linux: offers to grant `hdmon` (and `hdmon-gui`) the capabilities for raw disk commands with `setcap`, so the
+   background check can read SMART without sudo (asks interactively; `--setcap` / `--no-setcap` to decide up
+   front). macOS needs nothing for internal drives.
 5. Runs `hdmon install-service` to schedule the background check (skip with `--no-service`).
 6. `--system` also symlinks `hdmon` into `/usr/local/bin` (uses sudo).
 7. Leaves automatic update checks **off**. `--enable-auto-update` turns on the daily check (notify only).
@@ -189,13 +252,13 @@ Prebuilt binaries (also attached to GitHub releases by CI for `v*` tags):
    `-System` uses the **Machine** `Path`. Idempotent, and it broadcasts the change (`WM_SETTINGCHANGE`) so new
    windows see it. `hdmon` then works in cmd.exe and PowerShell alike (no shim needed any more).
 4. Runs `hdmon install-service`: a Task Scheduler task at logon + hourly. When the script runs **elevated**
-   the task gets **highest privileges**, so smartctl can read the drives (skip with `-NoService`).
+   the task gets **highest privileges**, so it can open the drives for full SMART data (skip with `-NoService`).
 5. Leaves automatic update checks **off**. `-EnableAutoUpdate` turns on the daily check (notify only).
 
 After installing, **open a new terminal / Command Prompt / PowerShell** and run `hdmon status`.
 
 `uninstall.sh` / `uninstall.ps1` remove the scheduled check, the binary, the PATH entries the installer added
-and the sudoers rule (if the installer created them). History and config are kept unless you pass
+and the sudoers rule older versions created (if any). History and config are kept unless you pass
 `--purge` / `-Purge`.
 
 ### Manual install (alternative)
@@ -204,33 +267,29 @@ It is one file, so you can also just copy it somewhere on your PATH:
 
 ```bash
 # Linux
-sudo apt install smartmontools               # Fedora: dnf, Arch: pacman -S smartmontools
 install -m 755 dist/hdmon-linux-x86_64 ~/.local/bin/hdmon
-sudo ~/.local/bin/hdmon status --no-record   # quick look (smartctl needs root, see below)
+sudo ~/.local/bin/hdmon status --no-record   # quick look (raw disk access needs root, see below)
 
 # macOS
-brew install smartmontools
 install -m 755 hdmon-macos-universal ~/.local/bin/hdmon
 hdmon status                                 # internal Apple SSDs often work without sudo
 ```
 
 ```powershell
 # Windows
-winget install smartmontools.smartmontools   # or: choco install smartmontools
 # copy hdmon.exe and hdmonw.exe to a folder on your Path, then in an elevated terminal:
 hdmon status
 ```
 
-Note: on Debian/Ubuntu `smartctl` lives in `/usr/sbin`, which is not on a normal user's PATH. Hard Drive
-Monitor finds it there anyway (and in Homebrew / `Program Files\smartmontools\bin` / Chocolatey locations).
+If you install smartmontools anyway (optional fallback), Hard Drive Monitor finds `smartctl` in `/usr/sbin`,
+Homebrew, `Program Files\smartmontools\bin` and Chocolatey locations.
 
 External USB drives on macOS often do not pass SMART data through at all (that is the USB bridge, not this
 tool); they show up as `UNKNOWN`.
 
-**Administrator rights are needed** for smartctl to open physical drives on Windows. Without admin (or
-without smartmontools), Hard Drive Monitor falls back to the Windows Storage counters (PowerShell
-`Get-PhysicalDisk` / `Get-StorageReliabilityCounter`), which give fewer attributes and sometimes none at all
-for USB drives.
+**Administrator rights are needed** to open physical drives on Windows. Without admin, Hard Drive Monitor falls
+back to the Windows Storage counters (WMI `MSFT_StorageReliabilityCounter`), which give fewer attributes and
+sometimes none at all for USB drives.
 
 ### Build from source
 
@@ -253,36 +312,42 @@ cmake -S . -B build-win -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64-x86_64.cmake -DCM
 cmake --build build-win --parallel                 # -> build-win/hdmon.exe, hdmonw.exe, hdmon_tests.exe
 ```
 
-## smartctl needs root (sudo notes)
+## SMART access (root / admin)
 
-Reading SMART data needs raw device access, so on Linux (and for most non-Apple disks on macOS) `smartctl`
-needs root. You have three options:
+Reading SMART data needs raw device access.
+
+**Linux:** the ATA and NVMe pass-through commands need root, or these three capabilities on the binary:
+`CAP_SYS_RAWIO` (ATA pass-through), `CAP_SYS_ADMIN` (NVMe admin commands) and `CAP_DAC_READ_SEARCH` (to open
+`/dev/sdX` and `/dev/nvmeN`, which are root/disk-only). You have three options:
 
 1. **Run it with sudo** for one-off checks: `sudo ~/.local/bin/hdmon status --no-record`. (Under sudo the history
    would go to root's home directory, hence `--no-record`.)
-2. **Recommended for the background check: a sudoers rule just for smartctl** (`./install.sh` offers to add
-   it; `./install.sh --sudoers` adds it without asking). Hard Drive Monitor then runs
-   as you and calls `sudo -n smartctl` only when smartctl reports a permission error (`sudo = "auto"`, the default):
+2. **Recommended for the background check: grant the capabilities once** (`./install.sh` offers it;
+   `./install.sh --setcap` does it without asking):
 
    ```bash
-   # Linux (path from `command -v smartctl` or /usr/sbin/smartctl)
-   echo "$USER ALL=(root) NOPASSWD: /usr/sbin/smartctl" | sudo tee /etc/sudoers.d/hard-drive-monitor
-   sudo chmod 440 /etc/sudoers.d/hard-drive-monitor && sudo visudo -c
-   # macOS: use /opt/homebrew/bin/smartctl (Apple Silicon) or /usr/local/bin/smartctl (Intel)
+   sudo setcap cap_sys_rawio,cap_sys_admin,cap_dac_read_search+ep ~/.local/bin/hdmon
+   sudo setcap cap_sys_rawio,cap_sys_admin,cap_dac_read_search+ep ~/.local/bin/hdmon-gui   # desktop app
    ```
 
-   This lets your account run smartctl as root without a password, including commands that change SMART
-   settings or start self-tests. That is low risk, but it is a privilege, so decide consciously.
+   hdmon then runs as you and can read the drives. This was tested as an unprivileged user (uid 1000) in the
+   QEMU harness: no capabilities → every drive `UNKNOWN` with a hint; with them → full SMART. The capabilities
+   belong to the file, so replacing the binary (`hdmon update`, re-installing) drops them; run the command
+   again afterwards. `setcap` is in `libcap2-bin` (Debian/Ubuntu) or `libcap` (Fedora, Arch). It does not work
+   on filesystems mounted `nosuid`.
 3. **Run the service as root** (`hdmon install-service --system` prints a root systemd unit / LaunchDaemon and
    the exact commands to install it; it never installs root services by itself). A root service keeps its
    history under root's home and cannot show desktop notifications in your session, so use e-mail alerts.
 
-On macOS the background check runs as you: the internal Apple SSD usually works without root, other disks
-need the sudoers rule (option 2) or a root LaunchDaemon (option 3, `hdmon install-service --system`).
+Older versions added a sudoers rule for smartctl. That is no longer needed; `uninstall.sh` still removes one
+it created.
 
-On Windows, run `install.ps1` (or `hdmon install-service`) from an **elevated** PowerShell so the scheduled
-task gets highest privileges. From a normal window the task runs without admin and falls back to the
-Windows Storage counters.
+**macOS:** IOKit reads internal SATA and NVMe drives as a normal user. External USB drives often do not pass
+SMART data through at all (that is the USB bridge); they show up as `UNKNOWN`.
+
+**Windows:** run `install.ps1` (or `hdmon install-service`) from an **elevated** PowerShell so the scheduled task
+gets highest privileges. From a normal window the task runs without admin and falls back to the Windows Storage
+counters (WMI).
 
 ## Automatic background check (on by default)
 
@@ -305,8 +370,8 @@ Notes:
 
 - Linux user timers only run while you are logged in. To keep them running without a login:
   `sudo loginctl enable-linger $USER`.
-- The background check runs **as you**, so it can only read SMART data if smartctl may run as root; see the
-  next section. Without that, drives show as `UNKNOWN` (macOS internal Apple SSDs usually work anyway).
+- The background check runs **as you**. On Linux it can only read SMART data if `hdmon` has the capabilities from
+  [SMART access](#smart-access-root--admin); without them drives show as `UNKNOWN`. macOS internal drives work anyway.
 
 ## Alerts
 
@@ -333,7 +398,14 @@ trends in `hdmon history` but do not alert on their own.
 - Windows: `%APPDATA%\hard-drive-monitor\config.toml`
 
 ```toml
-[smartctl]
+[smart]
+source = "auto"          # "auto" (native, smartctl fallback if installed) | "native" | "smartctl"
+
+[raid]
+enabled = true
+smartctl_devices = []    # extra hardware RAID members, e.g. ["/dev/sg0 -d cciss,0"]
+
+[smartctl]               # optional fallback only
 sudo = "auto"            # "auto" | true | false
 # path = "/usr/sbin/smartctl"
 
@@ -509,19 +581,27 @@ python3 tests/fixtures/make_fixtures.py    # regenerate the synthetic fixtures (
 python3 tools/render_demo.py               # regenerate demo-status.png from build/hdmon (needs Pillow)
 ```
 
-Layout: `src/` (one module per concern: `smart` discovery/parsing incl. the Windows fallback, `health` scoring,
+Layout: `src/` (one module per concern: `native_smart` (decoders) + `native_linux` / `native_windows` /
+`native_macos` (OS access), `smart` smartctl parsing and the optional smartctl fallback, `raid` / `raid_live` arrays,
+`wmi` Windows Storage WMI, `health` scoring,
 `history` SQLite, `alerts`, `service` scheduling, `update` opt-in self-update, `render`, `cli`, plus `gui_model` /
 `autostart` for the desktop app), `gui/` (the wxWidgets app), `cmake/gui.cmake`, `tests/` (doctest), `third_party/`.
-Platform-specific code is behind `#ifdef _WIN32` / `__APPLE__`; commands that only exist on one OS
-(`diskutil`, `lsblk`, PowerShell, `schtasks`, `launchctl`, `systemctl`) are run as child processes.
+Platform-specific code is behind `#ifdef _WIN32` / `__APPLE__` / `__linux__`. SMART, drive discovery, md RAID
+and Storage Spaces use OS APIs directly. The programs still run as child processes are listed with the
+reason for each in `docs/shell-outs.md`.
 
-All fixtures in `tests/fixtures/` are **synthetic**: hand-written to match the shape of `smartctl -x --json`
-(smartmontools 7.4) and of the Windows PowerShell inventory query. They were not captured from real drives,
-and their serial numbers are fake. Every file carries a `_synthetic` marker.
+The fixtures in `tests/fixtures/` are **synthetic**: hand-written to match the shape of `smartctl -x --json`
+(smartmontools 7.4), the Windows inventory query, `/proc/mdstat`, `mdadm --detail`, Storage Spaces,
+`diskutil appleRAID list` and `rstcli`. They were not captured from real drives, and their serial numbers
+are fake. JSON files carry a `_synthetic` marker. `tests/fixtures/native/*.bin` are raw ATA and NVMe sectors
+encoded from those JSON files by `make_native_fixtures.py`. The one exception is `tests/fixtures/native/qemu/`:
+real kernel captures from emulated QEMU drives, with smartctl's output for the same devices
+(regenerate with `tools/vm-verify/verify.sh`).
 
 `tests/expected/` holds the output of the original Python implementation (0.1.0) on those fixtures. The
 C++ test suite checks the native build against it: identical Health/Performance/status and reasons for every
 fixture and scenario, identical alert text, and byte-identical `status` / `detail` / `selftest` output.
+(0.2.4 changed one line in those files: the Windows fallback note no longer tells you to install smartmontools.)
 
 CI (GitHub Actions) builds and tests on Ubuntu, macOS and Windows, smoke-tests the installers, and on a
 `v*` tag attaches the Linux, macOS and Windows binaries, the desktop app builds (`hdmon-gui-*`, `Hard-Drive-Monitor-macos.zip`) and `SHA256SUMS.txt` to a GitHub release.

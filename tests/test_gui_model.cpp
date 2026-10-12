@@ -4,6 +4,7 @@
 #include "collect.hpp"
 #include "config.hpp"
 #include "gui_model.hpp"
+#include "raid.hpp"
 #include "smart.hpp"
 #include "update.hpp"
 
@@ -195,4 +196,109 @@ TEST_CASE("palette: exact status colours are pinned") {
     CHECK(p::CIRCLE_X == 2);
     CHECK(p::CIRCLE_Y == 2);
     CHECK(p::CIRCLE_D == 28);
+}
+
+TEST_CASE("RAID rows: array bold with arrow and state, members indented, raw disks not repeated") {
+    Scan sc = scan(default_config(), {th::fix("raid/sample")});
+    REQUIRE_FALSE(sc.arrays.empty());
+    auto rows = g::display_rows(sc.results, sc.arrays);
+    const g::DisplayRow* md0 = nullptr;
+    size_t md0_at = 0;
+    for (size_t i = 0; i < rows.size(); ++i)
+        if (rows[i].kind == g::DisplayRow::ARRAY && th::has(rows[i].cells[0], "md0")) { md0 = &rows[i]; md0_at = i; }
+    REQUIRE(md0);
+    CHECK(md0->bold);
+    CHECK(md0->expanded);
+    CHECK(md0->cells[0] == "\u25BC md0");
+    CHECK(md0->cells[4] == "Degraded");
+    CHECK(md0->status == "CRITICAL");                 // degraded mirror with a critical member
+    CHECK(g::row_tint(md0->status) == "#FF0000");
+    REQUIRE(md0_at + 2 < rows.size());
+    CHECK(rows[md0_at + 1].kind == g::DisplayRow::MEMBER);
+    CHECK(rows[md0_at + 1].cells[0] == "      sdb");
+    CHECK(rows[md0_at + 1].status == "CRITICAL");
+    CHECK(rows[md0_at + 2].cells[0] == "      sdd (failed)");
+    // sdb/sdd only appear as members
+    int sdb = 0;
+    for (auto& r : rows) sdb += th::has(r.cells[0], "sdb");
+    CHECK(sdb == 1);
+    // every drive is shown exactly once (top level or member)
+    std::set<int> seen;
+    for (auto& r : rows)
+        if (r.result >= 0) CHECK(seen.insert(r.result).second);
+    CHECK(seen.size() == sc.results.size());
+
+    auto collapsed = g::display_rows(sc.results, sc.arrays, {sc.arrays[0].id});
+    CHECK(collapsed.size() == rows.size() - sc.arrays[0].members.size());
+    for (auto& r : collapsed)
+        if (r.kind == g::DisplayRow::ARRAY && r.array == 0) {
+            CHECK_FALSE(r.expanded);
+            CHECK(th::has(r.cells[0], "\u25B6 "));
+        }
+}
+
+TEST_CASE("RAID: tray counts arrays, tooltip lists them, details rows, rebuild text") {
+    Result ok = fake("OK", 100, {}, "/dev/sdb");
+    ok.first.serial = "A";
+    Result ok2 = fake("OK", 100, {}, "/dev/sdc");
+    ok2.first.serial = "B";
+    std::vector<Result> rs = {ok, ok2};
+    RaidArray a;
+    a.id = "mdadm:x";
+    a.name = "md0";
+    a.level = "raid1";
+    a.backend = "mdadm";
+    a.state = "REBUILDING";
+    a.rebuild_pct = 45.0;
+    ArrayMember m1, m2;
+    m1.device = "/dev/sdb1";
+    m1.slot = 0;
+    m2.device = "/dev/sdc1";
+    m2.slot = 1;
+    m2.role = "rebuilding";
+    a.members = {m1, m2};
+    std::vector<RaidArray> arrs = {a};
+    link_members(arrs, rs);
+    CHECK(g::tray_status(rs) == "OK");
+    CHECK(g::tray_status(rs, arrs) == "WARNING");     // array state counts toward the tray colour
+    arrs[0].state = "FAILED";
+    CHECK(g::tray_status(rs, arrs) == "CRITICAL");
+    arrs[0].state = "REBUILDING";
+    std::string tip = g::tooltip_text(rs, arrs, "Beta V 0.2.4", 1000);
+    CHECK(th::has(tip, "md0 Rebuilding 45.0%"));
+    CHECK_FALSE(th::has(tip, "sdb 100%"));              // members are not listed twice
+    auto rows = g::display_rows(rs, arrs);
+    REQUIRE(rows.size() == 3);
+    CHECK(rows[0].cells[4] == "Rebuilding 45.0%");
+    CHECK(rows[0].status == "WARNING");
+    CHECK(rows[2].cells[0] == "      sdc (rebuilding)");
+    auto det = g::array_detail_rows(arrs[0], rs);
+    CHECK(det[0].first == "Status");
+    CHECK(det[0].second == "Warning (Rebuilding 45.0%)");
+    bool member = false;
+    for (auto& [k, v] : det) member = member || (k == "Member 1 sdc" && th::has(v, "rebuilding"));
+    CHECK(member);
+
+    // a member with no SMART data (e.g. Storage Spaces disk not matched) still shows, failed ones in red
+    RaidArray b = a;
+    b.id = "x2";
+    b.members[1].device = "";
+    b.members[1].role = "failed";
+    b.members[1].drive_key.clear();
+    auto rows2 = g::display_rows({}, {b});
+    CHECK(rows2.back().cells[0] == "      (missing disk) (failed)");
+    CHECK(rows2.back().status == "CRITICAL");
+}
+
+TEST_CASE("source text and smartmontools credit") {
+    Result n = fake("OK", 100);
+    n.first.source = "native (SG_IO ATA PASS-THROUGH(16))";
+    Result s = fake("OK", 100);
+    s.first.source = "smartctl (native read failed: x)";
+    json meta = {{"smartctl_version", "7.4"}};
+    CHECK(g::source_text({n}, meta) == "source: native SMART");
+    CHECK_FALSE(g::used_smartctl({n}, meta));
+    CHECK(g::source_text({n, s}, meta) == "source: native SMART + smartctl 7.4 (fallback)");
+    CHECK(g::used_smartctl({n, s}, meta));
+    CHECK(g::source_text({n}, {{"source", "json-files"}}) == "sample data (--from-json)");
 }

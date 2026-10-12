@@ -7,6 +7,7 @@
 #include "collect.hpp"
 #include "config.hpp"
 #include "gui_model.hpp"
+#include "raid.hpp"
 #include "render.hpp"
 #include "update.hpp"
 
@@ -27,6 +28,7 @@
 #include <ctime>
 #include <cstdio>
 #include <memory>
+#include <set>
 #include <thread>
 
 
@@ -80,6 +82,7 @@ static wxIcon app_icon() {
 
 struct ScanOutcome {
     std::vector<Result> results;
+    std::vector<RaidArray> arrays;
     json meta = json::object();
     std::string error;
     std::vector<Alert> alerts;
@@ -102,7 +105,14 @@ public:
 class DetailsDialog : public SmallDialog {
 public:
     DetailsDialog(wxWindow* parent, const Result& r)
-        : SmallDialog(parent, U("Details - " + g::drive_name(r.first) + " " + r.first.model.value_or(""))) {
+        : DetailsDialog(parent, "Details - " + g::drive_name(r.first) + " " + r.first.model.value_or(""),
+                        g::detail_rows(r.first, r.second), detail_view(r.first, r.second, Painter("never"))) {}
+    DetailsDialog(wxWindow* parent, const RaidArray& a, const std::vector<Result>& results)
+        : DetailsDialog(parent, "Details - RAID " + a.name, g::array_detail_rows(a, results),
+                        raid_view({a}, results, Painter("never"))) {}
+    DetailsDialog(wxWindow* parent, const std::string& title, const std::vector<std::pair<std::string, std::string>>& rows,
+                  const std::string& report)
+        : SmallDialog(parent, U(title)) {
         auto* top = new wxBoxSizer(wxVERTICAL);
         auto* nb = new wxNotebook(this, wxID_ANY);
         auto* page = new wxPanel(nb);
@@ -113,19 +123,19 @@ public:
         lv->AppendColumn("", wxLIST_FORMAT_LEFT, FromDIP(340));
         long i = 0;
         std::string notes;
-        for (auto& [k, v] : g::detail_rows(r.first, r.second)) {
+        for (auto& [k, v] : rows) {
             if (k == "Notes") { notes = v; continue; }   // long text: shown wrapped below the list
             lv->InsertItem(i, U(k));
             lv->SetItem(i, 1, U(v));
             ++i;
         }
         ps->Add(lv, 1, wxEXPAND);
-        auto* nt = new wxStaticText(page, wxID_ANY, U("Notes: " + replace_all(notes, "; ", "\n")));
+        auto* nt = new wxStaticText(page, wxID_ANY, U(notes.empty() ? std::string() : "Notes: " + replace_all(notes, "; ", "\n")));
         nt->Wrap(FromDIP(560));
         ps->Add(nt, 0, wxALL, FromDIP(8));
         page->SetSizer(ps);
         nb->AddPage(page, "Summary");
-        auto* txt = new wxTextCtrl(nb, wxID_ANY, U(detail_view(r.first, r.second, Painter("never"))), wxDefaultPosition,
+        auto* txt = new wxTextCtrl(nb, wxID_ANY, U(report), wxDefaultPosition,
                                    wxDefaultSize, wxTE_MULTILINE | wxTE_READONLY | wxTE_DONTWRAP | wxHSCROLL);
         txt->SetFont(wxFont(wxFontInfo(9).Family(wxFONTFAMILY_TELETYPE)));
         nb->AddPage(txt, "Full report");
@@ -142,7 +152,7 @@ public:
 
 class AboutDialog : public SmallDialog {
 public:
-    explicit AboutDialog(wxWindow* parent) : SmallDialog(parent, "About Hard Drive Monitor") {
+    AboutDialog(wxWindow* parent, bool smartctl_used) : SmallDialog(parent, "About Hard Drive Monitor") {
         auto* top = new wxBoxSizer(wxVERTICAL);
         auto* head = new wxBoxSizer(wxHORIZONTAL);
         wxIcon ic = app_icon();
@@ -164,11 +174,19 @@ public:
                                   "Successor of Disk Monitor (VB.NET, Beta 0.05)."),
                  0, wxLEFT | wxRIGHT | wxTOP, FromDIP(18));
         top->Add(new wxStaticText(this, wxID_ANY,
-                                  "Drive data is read with smartmontools (smartctl), which is free software\n"
-                                  "licensed under the GNU GPL, version 2 or later."),
+                                  "SMART data is read natively through the operating system\n"
+                                  "(no extra tools needed). RAID arrays: Linux md, Storage Spaces,\n"
+                                  "Intel RST, AppleRAID and hardware RAID controllers."),
                  0, wxLEFT | wxRIGHT | wxTOP, FromDIP(18));
-        top->Add(new wxHyperlinkCtrl(this, wxID_ANY, "www.smartmontools.org", "https://www.smartmontools.org"), 0,
-                 wxLEFT | wxRIGHT, FromDIP(18));
+        if (smartctl_used) {   // credit smartmontools only when the optional fallback was actually used
+            top->Add(new wxStaticText(this, wxID_ANY,
+                                      "Some drives were read with the optional smartmontools (smartctl)\n"
+                                      "fallback, which is free software licensed under the GNU GPL,\n"
+                                      "version 2 or later."),
+                     0, wxLEFT | wxRIGHT | wxTOP, FromDIP(18));
+            top->Add(new wxHyperlinkCtrl(this, wxID_ANY, "www.smartmontools.org", "https://www.smartmontools.org"), 0,
+                     wxLEFT | wxRIGHT, FromDIP(18));
+        }
         top->Add(new wxHyperlinkCtrl(this, wxID_ANY, "github.com/rreeves5/hard-drive-monitor",
                                      "https://github.com/rreeves5/hard-drive-monitor"),
                  0, wxLEFT | wxRIGHT | wxTOP, FromDIP(18));
@@ -199,7 +217,9 @@ public:
         top->Add(head, 0, wxEXPAND);
         std::string body;
         for (auto& a : alerts) body += a.title + "\n" + a.body + "\n\n";
-        body += "Back up anything important on this drive now.";
+        bool raid_only = true;
+        for (auto& a : alerts) raid_only = raid_only && contains(a.title, ": RAID ");
+        if (!raid_only) body += "Back up anything important on this drive now.";
         auto* bt = new wxStaticText(this, wxID_ANY, U(body));
         bt->Wrap(FromDIP(420));
         top->Add(bt, 1, wxALL | wxEXPAND, FromDIP(14));
@@ -350,52 +370,93 @@ public:
         for (auto* b : {scan_, opt, abt}) bar->Add(b, 0, wxALL, FromDIP(3));
         top->Add(bar, 0, wxLEFT, FromDIP(2));
         list_ = new wxListCtrl(panel, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxLC_REPORT | wxLC_SINGLE_SEL);
-        list_->AppendColumn("Drive", wxLIST_FORMAT_LEFT, FromDIP(90));
+        list_->AppendColumn("Drive", wxLIST_FORMAT_LEFT, FromDIP(150));
         list_->AppendColumn("Model", wxLIST_FORMAT_LEFT, FromDIP(270));
         list_->AppendColumn("Size", wxLIST_FORMAT_RIGHT, FromDIP(90));
         list_->AppendColumn("Temp", wxLIST_FORMAT_RIGHT, FromDIP(70));
-        list_->AppendColumn("Health", wxLIST_FORMAT_RIGHT, FromDIP(90));
+        list_->AppendColumn("Health", wxLIST_FORMAT_RIGHT, FromDIP(130));
         top->Add(list_, 1, wxEXPAND);
         panel->SetSizer(top);
         CreateStatusBar(1);
-        SetClientSize(FromDIP(wxSize(640, 300)));
+        SetClientSize(FromDIP(wxSize(760, 300)));
         CentreOnScreen();
 
         scan_->Bind(wxEVT_BUTTON, &MainFrame::OnScan, this);
         opt->Bind(wxEVT_BUTTON, &MainFrame::OnOptions, this);
         abt->Bind(wxEVT_BUTTON, &MainFrame::OnAbout, this);
-        list_->Bind(wxEVT_LIST_ITEM_ACTIVATED, [this](wxListEvent&) { ShowDetails(); });
+        list_->Bind(wxEVT_LIST_ITEM_ACTIVATED, [this](wxListEvent& e) {
+            long i = e.GetIndex();
+            if (i >= 0 && i < static_cast<long>(rows_.size()) && rows_[i].kind == g::DisplayRow::ARRAY) Toggle(i);
+            else ShowDetails();
+        });
+        // A click on the ▼/▶ arrow of an array row collapses or expands it.
+        list_->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent& e) {
+            int flags = 0;
+            long i = list_->HitTest(e.GetPosition(), flags);
+            e.Skip();
+            if (i >= 0 && e.GetPosition().x < FromDIP(22)) CallAfter([this, i] { Toggle(i); });
+        });
         list_->Bind(wxEVT_LIST_ITEM_RIGHT_CLICK, [this](wxListEvent& e) {
+            long i = e.GetIndex();
             wxMenu m;
             m.Append(wxID_INFO, "Details");
             m.Bind(wxEVT_MENU, [this](wxCommandEvent&) { ShowDetails(); }, wxID_INFO);
-            (void)e;
+            if (i >= 0 && i < static_cast<long>(rows_.size()) && rows_[i].kind == g::DisplayRow::ARRAY) {
+                m.Append(wxID_VIEW_LIST, rows_[i].expanded ? "Collapse" : "Expand");
+                m.Bind(wxEVT_MENU, [this, i](wxCommandEvent&) { Toggle(i); }, wxID_VIEW_LIST);
+            }
             PopupMenu(&m);
         });
         Bind(wxEVT_CLOSE_WINDOW, &MainFrame::OnClose, this);
     }
 
-    void ShowScan(const std::vector<Result>& results, bool have, bool scanning, const std::string& status) {
+    void ShowScan(const std::vector<Result>& results, const std::vector<RaidArray>& arrays, bool have, bool scanning,
+                  const std::string& status) {
         SetTitle(U(std::string("Hard Drive Monitor ") + GUI_VERSION + (scanning ? " - scanning..." : "")));
         scan_->Enable(!scanning);
         SetStatusText(U(status));
         if (!have) return;
-        rows_ = g::sorted_for_display(results);
+        results_ = results;
+        arrays_ = arrays;
+        Fill();
+    }
+
+    // Array rows: bold, ▼/▶ arrow, the array's status colour, state text ("Degraded", "Rebuilding 45.0%") in
+    // the Health column; members indented under it. Same palette as plain drive rows.
+    void Fill() {
+        long keep = list_->GetNextItem(-1, wxLIST_NEXT_ALL, wxLIST_STATE_SELECTED);
+        rows_ = g::display_rows(results_, arrays_, collapsed_);
         list_->Freeze();
         list_->DeleteAllItems();
+        wxFont bold = list_->GetFont();
+        bold.SetWeight(wxFONTWEIGHT_BOLD);
         for (long i = 0; i < static_cast<long>(rows_.size()); ++i) {
-            const auto& [d, a] = rows_[i];
-            list_->InsertItem(i, U(g::drive_name(d)));
-            list_->SetItem(i, 1, U(d.model.value_or("")));
-            list_->SetItem(i, 2, U(g::size_text(d)));
-            list_->SetItem(i, 3, U(g::temp_text(d)));
-            list_->SetItem(i, 4, U(g::health_text(a)));
-            list_->SetItemBackgroundColour(i, C(g::row_tint(a.status)));
+            const auto& r = rows_[i];
+            list_->InsertItem(i, U(r.cells[0]));
+            for (int c = 1; c < 5; ++c) list_->SetItem(i, c, U(r.cells[c]));
+            list_->SetItemBackgroundColour(i, C(g::row_tint(r.status)));
             list_->SetItemTextColour(i, C(hdmon::palette::ROW_TEXT));
+            if (r.bold) list_->SetItemFont(i, bold);
         }
+        if (keep >= 0 && keep < list_->GetItemCount()) list_->SetItemState(keep, wxLIST_STATE_SELECTED, wxLIST_STATE_SELECTED);
         list_->Thaw();
     }
 
+    void Toggle(long i) {
+        if (i < 0 || i >= static_cast<long>(rows_.size()) || rows_[i].kind != g::DisplayRow::ARRAY) return;
+        const std::string& id = arrays_[rows_[i].array].id;
+        if (!collapsed_.erase(id)) collapsed_.insert(id);
+        Fill();
+    }
+
+    bool SelectFirstArray() {
+        for (long i = 0; i < static_cast<long>(rows_.size()); ++i)
+            if (rows_[i].kind == g::DisplayRow::ARRAY) {
+                list_->SetItemState(i, wxLIST_STATE_SELECTED | wxLIST_STATE_FOCUSED, wxLIST_STATE_SELECTED | wxLIST_STATE_FOCUSED);
+                return true;
+            }
+        return false;
+    }
     void SelectFirst() {
         if (list_->GetItemCount() > 0) list_->SetItemState(0, wxLIST_STATE_SELECTED | wxLIST_STATE_FOCUSED, wxLIST_STATE_SELECTED | wxLIST_STATE_FOCUSED);
     }
@@ -404,7 +465,10 @@ public:
 private:
     wxListCtrl* list_;
     wxButton* scan_;
-    std::vector<Result> rows_;
+    std::vector<Result> results_;
+    std::vector<RaidArray> arrays_;
+    std::vector<g::DisplayRow> rows_;
+    std::set<std::string> collapsed_;
     void OnScan(wxCommandEvent&);
     void OnOptions(wxCommandEvent&);
     void OnAbout(wxCommandEvent&);
@@ -510,7 +574,14 @@ wxMenu* TrayIcon::MakeMenu() {
 void MainFrame::ShowDetails() {
     long sel = list_->GetNextItem(-1, wxLIST_NEXT_ALL, wxLIST_STATE_SELECTED);
     if (sel < 0 || sel >= static_cast<long>(rows_.size())) return;
-    DetailsDialog dlg(this, rows_[sel]);
+    const auto& r = rows_[sel];
+    if (r.kind == g::DisplayRow::ARRAY || (r.kind == g::DisplayRow::MEMBER && r.result < 0)) {
+        DetailsDialog dlg(this, arrays_[r.array], results_);
+        dlg.ShowModal();
+        return;
+    }
+    if (r.result < 0) return;
+    DetailsDialog dlg(this, results_[r.result]);
     dlg.ShowModal();
 }
 void MainFrame::OnScan(wxCommandEvent&) { wxGetApp().ScanNow(); }
@@ -571,15 +642,14 @@ bool HdmonApp::OnInit() {
             if (open_ == "options") ShowOptions();
             else if (open_ == "about") ShowAbout();
             else if (open_ == "tray-menu") ShowTrayMenu();
-            else if (open_ == "details") {
+            else if (open_ == "details" || open_ == "raid") {
                 ShowWindow();
                 // details need data: retry until the first scan finished
                 auto* t = new wxTimer();
                 t->Bind(wxEVT_TIMER, [this, t](wxTimerEvent&) {
                     if (!have_) return;
                     t->Stop();
-                    frame_->SelectFirst();
-                    frame_->ShowDetails();
+                    if (open_ == "raid" ? frame_->SelectFirstArray() : (frame_->SelectFirst(), true)) frame_->ShowDetails();
                     t->CallAfter([t] { delete t; });
                 });
                 t->Start(200);
@@ -597,7 +667,7 @@ int HdmonApp::OnExit() {
 
 void HdmonApp::ShowWindow() {
     if (!frame_) frame_ = new MainFrame();
-    frame_->ShowScan(last_.results, have_, scanning_, StatusLine());
+    frame_->ShowScan(last_.results, last_.arrays, have_, scanning_, StatusLine());
     frame_->Show();
     if (frame_->IsIconized()) frame_->Iconize(false);
     frame_->Raise();
@@ -635,7 +705,7 @@ void HdmonApp::ShowAbout() {
     if (dialog_open_) return;
     dialog_open_ = true;
     {
-        AboutDialog dlg(Owner());
+        AboutDialog dlg(Owner(), g::used_smartctl(last_.results, last_.meta));
         dlg.ShowModal();
     }
     dialog_open_ = false;
@@ -660,11 +730,16 @@ void HdmonApp::ScanNow() {
     worker_ = std::thread([this, cfg, from, db] {
         ScanOutcome out;
         try {
-            out.results = collect(cfg, from, out.meta);
+            Scan sc = scan(cfg, from);
+            out.results = std::move(sc.results);
+            out.arrays = std::move(sc.arrays);
+            out.meta = std::move(sc.meta);
             if (from.empty()) {   // like the CLI: --from-json runs are not recorded
                 History h(db);
-                Changes ch = h.record(out.results, jstr(out.meta, "source").value_or("live"));
+                Changes ach;
+                Changes ch = h.record(out.results, jstr(out.meta, "source").value_or("live"), "", &out.arrays, &ach);
                 out.alerts = build_alerts(out.results, ch);
+                for (auto& a : build_array_alerts(out.arrays, out.results, ach)) out.alerts.push_back(a);
                 if (!out.alerts.empty() && truthy(jget(jget(cfg, "email"), "enabled")) &&
                     g::load_gui_settings(cfg).alert_on_danger) {
                     std::vector<std::string> parts;
@@ -686,9 +761,11 @@ std::string HdmonApp::StatusLine() const {
     if (scanning_) return "Scanning drives...";
     if (!last_.error.empty()) return "Last scan failed: " + replace_all(last_.error, "\n", " ");
     if (!have_) return "";
-    std::string s = "Last scan " + last_.finished + "  \u00B7  " + std::to_string(last_.results.size()) + " drive(s)  \u00B7  worst: " +
-                    g::status_label(g::tray_status(last_.results));
-    if (jstr(last_.meta, "source") == std::optional<std::string>("json-files")) s += "  \u00B7  sample data (--from-json)";
+    std::string s = "Last scan " + last_.finished + "  \u00B7  " + std::to_string(last_.results.size()) + " drive(s)" +
+                    (last_.arrays.empty() ? std::string() : ", " + std::to_string(last_.arrays.size()) + " RAID array(s)") +
+                    "  \u00B7  worst: " + g::status_label(g::tray_status(last_.results, last_.arrays));
+    std::string src = g::source_text(last_.results, last_.meta);
+    if (!src.empty()) s += "  \u00B7  " + src;
     if (auto w = jstr(last_.meta, "warning")) s += "  \u00B7  " + *w;
     for (auto& [d, a] : last_.results)
         for (auto& n : d.notes)
@@ -701,10 +778,10 @@ void HdmonApp::Refresh() {
         if (scanning_ && !have_) tray_->SetIcon(circle_icon("UNKNOWN"), U(g::tooltip_scanning(GUI_VERSION)));
         else if (!last_.error.empty()) tray_->SetIcon(circle_icon("UNKNOWN"), U(g::tooltip_failed(GUI_VERSION)));
         else if (have_)
-            tray_->SetIcon(circle_icon(g::tray_status(last_.results)),
-                           U(g::tooltip_text(last_.results, GUI_VERSION, current_os() == OS::Windows ? 127 : 1000)));
+            tray_->SetIcon(circle_icon(g::tray_status(last_.results, last_.arrays)),
+                           U(g::tooltip_text(last_.results, last_.arrays, GUI_VERSION, current_os() == OS::Windows ? 127 : 1000)));
     }
-    if (frame_) frame_->ShowScan(last_.results, have_, scanning_, StatusLine());
+    if (frame_) frame_->ShowScan(last_.results, last_.arrays, have_, scanning_, StatusLine());
 }
 
 void HdmonApp::OnScanDone(ScanOutcome out) {
@@ -717,14 +794,18 @@ void HdmonApp::OnScanDone(ScanOutcome out) {
     else last_.results.clear(), have_ = true;
     Refresh();
     settings_ = g::load_gui_settings(Config());
-    if (!alerts.empty() && settings_.alert_on_danger) {
+    std::vector<Alert> danger, info;
+    for (auto& a : alerts) (a.severity == "OK" ? info : danger).push_back(a);   // OK = RAID rebuild complete
+    if (!danger.empty() && settings_.alert_on_danger) {
         std::string tip;
-        for (auto& a : alerts) tip += (tip.empty() ? "" : "\n") + a.title;
+        for (auto& a : danger) tip += (tip.empty() ? "" : "\n") + a.title;
         Notify("Hard Drive Monitor - drive in danger", tip, true);
-        auto* dlg = new AlertDialog(alerts);
+        auto* dlg = new AlertDialog(danger);
         dlg->Show();
         dlg->Raise();
     }
+    for (auto& a : info)
+        if (settings_.alert_on_danger) Notify(a.title, a.body, false);
 }
 
 void HdmonApp::Restart() {
@@ -776,7 +857,7 @@ int main(int argc, char** argv) {
         }
         if (a == "-h" || a == "--help") {
             std::printf("usage: hdmon-gui [--show] [--from-json FILE_OR_DIR]... [--config FILE] [--db FILE]\n"
-                        "                 [--open options|about|details|tray-menu] [--version]\n\n"
+                        "                 [--open options|about|details|raid|tray-menu] [--version]\n\n"
                         "Hard Drive Monitor desktop app: tray icon in the worst drive's colour, drive list,\n"
                         "hourly background scans. The command-line tool is `hdmon`.\n");
             return 0;

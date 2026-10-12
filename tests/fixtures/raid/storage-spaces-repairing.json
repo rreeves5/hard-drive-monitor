@@ -1,0 +1,53 @@
+{
+  "_synthetic": "SYNTHETIC: the JSON hdmon builds from the MSFT_* WMI classes (same shape as its PowerShell fallback)",
+  "StoragePools": [
+    {
+      "FriendlyName": "Data",
+      "ObjectId": "{1}\\\\NAS\\root/Microsoft/Windows/Storage/Providers_v2\\SPACES_StoragePool.ObjectId=\"{7b2c1a4e-0000-4000-8000-000000000001}:SP\"",
+      "HealthStatus": "Healthy",
+      "OperationalStatus": "OK",
+      "Size": 7999376588800,
+      "IsPrimordial": false
+    }
+  ],
+  "VirtualDisks": [
+    {
+      "FriendlyName": "Mirror",
+      "PoolFriendlyName": "Data",
+      "HealthStatus": "Warning",
+      "OperationalStatus": "In Service",
+      "ResiliencySettingName": "Mirror",
+      "Size": 3998614552576
+    }
+  ],
+  "PhysicalDisks": [
+    {
+      "DeviceId": "1",
+      "FriendlyName": "WDC WD40EFZX-68AWUN0",
+      "SerialNumber": "WD-SYNTHSP01",
+      "PoolFriendlyName": "Data",
+      "HealthStatus": "Healthy",
+      "OperationalStatus": "OK",
+      "Usage": "Auto-Select",
+      "Size": 4000787030016
+    },
+    {
+      "DeviceId": "2",
+      "FriendlyName": "WDC WD40EFZX-68AWUN0",
+      "SerialNumber": "WD-SYNTHSP02",
+      "PoolFriendlyName": "Data",
+      "HealthStatus": "Healthy",
+      "OperationalStatus": "OK",
+      "Usage": "Auto-Select",
+      "Size": 4000787030016
+    }
+  ],
+  "StorageJobs": [
+    {
+      "Name": "Mirror-Repair",
+      "JobState": "Running",
+      "PercentComplete": 42,
+      "IsBackgroundTask": true
+    }
+  ]
+}

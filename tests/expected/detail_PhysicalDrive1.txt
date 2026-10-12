@@ -34,4 +34,4 @@ PhysicalDrive1  ST3000DM001-1CH166
     ReadLatencyMax              48211
     WriteLatencyMax             3021
 
-  note: Windows Storage fallback: fewer attributes than smartctl. Install smartmontools for the full SMART view.
+  note: Windows Storage fallback: fewer attributes than native SMART. Run as Administrator for the full SMART view.

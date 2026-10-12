@@ -1,7 +1,13 @@
 #include "alerts.hpp"
 
+#include "raid.hpp"
+#include "render.hpp"
+
 #include <cstdio>
 #include <filesystem>
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 
 namespace hdmon {
 
@@ -39,6 +45,37 @@ std::vector<Alert> build_alerts(const std::vector<Result>& results, const Change
                         (a.performance ? std::to_string(*a.performance) : std::string("None")) + "%  Status " + a.status);
         for (auto& r : a.reasons()) lines.push_back("- " + r);
         out.push_back({a.status, "Hard Drive Monitor " + a.status + ": " + drive_label(d), join(lines, "\n")});
+    }
+    return out;
+}
+
+std::vector<Alert> build_array_alerts(const std::vector<RaidArray>& arrays, const std::vector<Result>& results,
+                                      const Changes& array_changes) {
+    std::vector<Alert> out;
+    for (auto& a : arrays) {
+        auto it = array_changes.find(a.id);
+        if (it == array_changes.end()) continue;
+        for (auto& c : it->second) {
+            if (!truthy(jget(c, "alert"))) continue;
+            std::string ev = jstr(c, "event").value_or("");
+            std::string what = ev == "failed" ? "FAILED" : ev == "degraded" ? "degraded" : ev == "rebuild_started" ? "rebuild started"
+                             : ev == "rebuild_complete" ? "rebuild complete" : ev == "rebuilding" ? "rebuilding" : ev;
+            std::string status = array_status(a, results);
+            std::vector<std::string> lines;
+            std::string old = jget(c, "old").is_null() ? std::string("first seen") : to_str(c["old"]);
+            lines.push_back(backend_label(a.backend) + " " + a.level + ": " + old + " -> " + a.state +
+                            (a.rebuild_pct && a.state == "REBUILDING" ? " (" + fmt_fixed(*a.rebuild_pct, 1) + "%)" : ""));
+            for (auto& m : a.members) {
+                const Result* r = member_result(m, results);
+                std::string label = r ? drive_label(r->first) : (m.device.empty() ? std::string("(missing disk)") : m.device);
+                std::string st = r ? r->second.status + (r->second.health ? " " + std::to_string(*r->second.health) + "%" : "") : "no SMART data";
+                lines.push_back("- " + label + ": " + m.role + ", " + st);
+            }
+            if (ev == "rebuilding") lines.push_back("The array has no redundancy until the rebuild finishes.");
+            if (ev == "degraded" || ev == "failed") lines.push_back("Back up the data on this array now and replace the failed disk.");
+            out.push_back({ev == "rebuild_complete" ? std::string("OK") : status,
+                           "Hard Drive Monitor: RAID " + a.name + " " + what, join(lines, "\n")});
+        }
     }
     return out;
 }
@@ -127,7 +164,12 @@ std::pair<bool, std::string> send_email(const json& cfg, const std::string& subj
     std::string password = jstr(e, "password").value_or("");
     if (password.empty()) { auto env = jstr(e, "password_env"); if (env && !env->empty()) password = get_env(env->c_str()); }
     std::string host = get_env("COMPUTERNAME");
-    if (host.empty()) host = trim(run_cmd({"hostname"}, 10).out);
+#ifndef _WIN32
+    if (host.empty()) {   // gethostname(2), not the `hostname` program
+        char buf[256] = {0};
+        if (gethostname(buf, sizeof buf - 1) == 0) host = buf;
+    }
+#endif
     auto tmp = std::filesystem::temp_directory_path() / ("hdmon-mail-" + std::to_string(std::rand()) + ".eml");
     write_file(tmp.string(), build_email_message(cfg, subject, body, host));
     std::string conf = build_curl_config(cfg, tmp.string(), password);   // via stdin: password never on the command line

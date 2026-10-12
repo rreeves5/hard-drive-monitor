@@ -1,6 +1,9 @@
 #include "render.hpp"
 
 #include <algorithm>
+#include <set>
+
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <map>
@@ -22,7 +25,7 @@ static const std::map<std::string, std::string> COLORS = {
     {"red", "\033[31m"}, {"green", "\033[32m"}, {"yellow", "\033[33m"}, {"blue", "\033[34m"},
     {"cyan", "\033[36m"}, {"dim", "\033[2m"}, {"bold", "\033[1m"}, {"bred", "\033[1;31m"}};
 static const char* RESET = "\033[0m";
-static std::string status_color(const std::string& s) {
+std::string status_color(const std::string& s) {
     if (s == "OK") return "green";
     if (s == "WARNING") return "yellow";
     if (s == "CRITICAL") return "bred";
@@ -111,36 +114,104 @@ std::string device_label(const Drive& d) {
     return d.device + " (" + join(v, " ") + (d.volumes.size() > 3 ? "…" : "") + ")";
 }
 
-std::string status_view(std::vector<Result> results, const Painter& paint, const json& meta, const Changes& changes) {
-    if (results.empty()) return "No drives found.";
+static std::vector<Cell> drive_cells(const Drive& d, const Assessment& a, const std::string& label) {
+    std::string model = d.model.value_or("-");
+    if (model.empty()) model = "-";
+    if (u8len(model) > 26) model = u8substr(model, 25) + "…";
+    std::string temp_c;
+    for (auto& f : a.findings) if (f.metric && *f.metric == "temperature") temp_c = sev_color(f.severity);
+    std::string health = a.health ? bar(a.health, 8) + " " + rjust(std::to_string(*a.health), 3) + "%" : "n/a";
+    return {
+        {label, "cyan"}, {model, ""}, {d.serial && !d.serial->empty() ? *d.serial : "-", "dim"}, {d.kind, ""},
+        {fmt_size(d.capacity_bytes), ""},
+        {d.temperature_c ? std::to_string(*d.temperature_c) + " C" : "-", temp_c},
+        {fmt_hours(d.power_on_hours), ""},
+        {d.power_cycles ? with_commas(*d.power_cycles) : "-", ""},
+        {health, pct_color(a.health)},
+        {a.performance ? std::to_string(*a.performance) + "%" : "n/a", pct_color(a.performance)},
+        {a.status, status_color(a.status)},
+    };
+}
+
+static std::string state_color(const std::string& state) { return status_color(state_status(state)); }
+
+static void array_rows(const RaidArray& ar, const std::vector<Result>& all, std::vector<std::vector<Cell>>& rows) {
+    std::string st = array_status(ar, all);
+    std::string lvl = ar.level.empty() ? "RAID" : ar.level;
+    std::string model = lvl + " · " + backend_label(ar.backend);
+    if (u8len(model) > 26) model = u8substr(model, 25) + "…";
+    rows.push_back({{ar.name, "bold"}, {model, ""}, {"-", "dim"}, {"RAID", ""}, {fmt_size(ar.size_bytes), ""}, {"-", ""},
+                    {"-", ""}, {"-", ""}, {state_text(ar), state_color(ar.state)}, {"-", ""}, {st, status_color(st)}});
+    for (size_t i = 0; i < ar.members.size(); ++i) {
+        const ArrayMember& m = ar.members[i];
+        std::string branch = i + 1 == ar.members.size() ? "  └ " : "  ├ ";
+        std::string role = m.role == "active" ? "" : " (" + m.role + ")";
+        const Result* r = member_result(m, all);
+        if (r) {
+            rows.push_back(drive_cells(r->first, r->second, branch + disk_label(r->first) + role));
+        } else {
+            std::string dev = m.device.empty() ? "(missing)" : (starts_with(m.device, "/dev/") ? m.device.substr(5) : m.device);
+            rows.push_back({{branch + dev + role, "cyan"}, {"no SMART data", "dim"}, {m.serial.value_or("-"), "dim"}, {"-", ""},
+                            {fmt_size(m.size_bytes), ""}, {"-", ""}, {"-", ""}, {"-", ""}, {"n/a", ""}, {"n/a", ""},
+                            {m.role == "failed" || m.role == "missing" ? "FAILED" : "UNKNOWN",
+                             m.role == "failed" || m.role == "missing" ? "red" : "dim"}});
+        }
+    }
+}
+
+std::string source_summary(const json& meta) {
+    std::string src = jstr(meta, "source").value_or("");
+    if (src == "json-files") return "Source: saved JSON files (--from-json)";
+    std::vector<std::string> parts;
+    const json& c = jget(meta, "sources");
+    auto n = [&](const char* k) { return jint(c, k).value_or(0); };
+    if (n("native")) parts.push_back(std::to_string(n("native")) + " native SMART (" + jstr(meta, "native_backend").value_or("OS API") + ")");
+    if (n("smartctl")) parts.push_back(std::to_string(n("smartctl")) + " via smartctl " + jstr(meta, "smartctl_version").value_or("") +
+                                       (jstr(meta, "smart_source_setting").value_or("") == "smartctl" ? "" : " (fallback)"));
+    if (n("windows-storage")) parts.push_back(std::to_string(n("windows-storage")) + " via Windows reliability counters");
+    if (parts.empty()) return "Source: native SMART (" + jstr(meta, "native_backend").value_or("OS API") + ")";
+    return "Source: " + join(parts, ", ");
+}
+
+std::string status_view(std::vector<Result> results, const Painter& paint, const json& meta, const Changes& changes,
+                        const std::vector<RaidArray>& arrays, const Changes& array_changes) {
+    if (results.empty() && arrays.empty()) return "No drives found.";
     std::stable_sort(results.begin(), results.end(), [](const Result& a, const Result& b) {
         bool pa = starts_with(a.first.device, "PhysicalDrive"), pb = starts_with(b.first.device, "PhysicalDrive");
         if (pa != pb) return pa < pb;
         return a.first.device < b.first.device;
     });
+    const std::vector<Result> all = results;
+    std::set<std::string> in_array = member_keys(arrays);
+    results.erase(std::remove_if(results.begin(), results.end(), [&](const Result& r) { return in_array.count(r.first.key()) > 0; }),
+                  results.end());
     std::vector<std::string> headers = {"DEVICE", "MODEL", "SERIAL", "TYPE", "SIZE", "TEMP", "POWER-ON", "CYCLES", "HEALTH", "PERF", "STATUS"};
     std::vector<std::vector<Cell>> rows;
-    for (auto& [d, a] : results) {
-        std::string model = d.model.value_or("-");
-        if (model.empty()) model = "-";
-        if (u8len(model) > 26) model = u8substr(model, 25) + "…";
-        std::string temp_c;
-        for (auto& f : a.findings) if (f.metric && *f.metric == "temperature") temp_c = sev_color(f.severity);
-        std::string health = a.health ? bar(a.health, 8) + " " + rjust(std::to_string(*a.health), 3) + "%" : "n/a";
-        rows.push_back({
-            {device_label(d), "cyan"}, {model, ""}, {d.serial && !d.serial->empty() ? *d.serial : "-", "dim"}, {d.kind, ""},
-            {fmt_size(d.capacity_bytes), ""},
-            {d.temperature_c ? std::to_string(*d.temperature_c) + " C" : "-", temp_c},
-            {fmt_hours(d.power_on_hours), ""},
-            {d.power_cycles ? with_commas(*d.power_cycles) : "-", ""},
-            {health, pct_color(a.health)},
-            {a.performance ? std::to_string(*a.performance) + "%" : "n/a", pct_color(a.performance)},
-            {a.status, status_color(a.status)},
-        });
-    }
+    for (auto& [d, a] : results) rows.push_back(drive_cells(d, a, device_label(d)));
+    for (auto& ar : arrays) array_rows(ar, all, rows);
     std::vector<std::string> out = {table(headers, rows, paint, {4, 5, 6, 7, 9})};
     std::vector<std::string> details;
-    for (auto& [d, a] : results) {
+    for (auto& ar : arrays) {
+        std::string st = array_status(ar, all);
+        std::vector<std::string> lines;
+        auto it = array_changes.find(ar.id);
+        if (it != array_changes.end())
+            for (auto& c : it->second)
+                if (truthy(jget(c, "alert")))
+                    lines.push_back("   " + paint("▲ array " + to_str(c["event"]) + ": " + (c["old"].is_null() ? std::string("first seen") : to_str(c["old"])) +
+                                                  " -> " + to_str(c["new"]), "red"));
+        if (ar.state != "OK") lines.push_back("   " + paint(ar.state == "FAILED" ? "✖" : (ar.state == "UNKNOWN" ? "·" : "!"), state_color(ar.state)) +
+                                              " " + state_text(ar) + (ar.raw_state.empty() ? "" : " (" + ar.raw_state + ")"));
+        for (auto& m : ar.members)
+            if (m.role == "failed" || m.role == "missing" || m.role == "rebuilding")
+                lines.push_back("   " + paint(m.role == "rebuilding" ? "!" : "✖", m.role == "rebuilding" ? "yellow" : "red") + " member " +
+                                (m.device.empty() ? std::string("(slot ") + (m.slot ? std::to_string(*m.slot) : "?") + ")" : m.device) + " " + m.role);
+        if (ar.state == "UNKNOWN") for (auto& n : ar.notes) lines.push_back("   · " + n);
+        if (lines.empty()) continue;
+        details.push_back(paint(ar.name, "bold") + paint("  " + st, status_color(st)));
+        details.insert(details.end(), lines.begin(), lines.end());
+    }
+    for (auto& [d, a] : all) {
         std::vector<Finding> items;
         for (auto& f : a.findings) if (f.severity != "info") items.push_back(f);
         if (items.empty() && a.status == "UNKNOWN")
@@ -161,13 +232,58 @@ std::string status_view(std::vector<Result> results, const Painter& paint, const
     std::vector<std::string> summary;
     for (const char* s : {"OK", "WARNING", "CRITICAL", "UNKNOWN"}) {
         int n = 0;
-        for (auto& r : results) if (r.second.status == s) ++n;
+        for (auto& r : all) if (r.second.status == s) ++n;
         if (n) summary.push_back(paint(std::to_string(n) + " " + s, status_color(s)));
     }
     out.push_back("");
-    out.push_back(std::to_string(results.size()) + " drive(s): " + join(summary, "  "));
+    std::string line = std::to_string(all.size()) + " drive(s): " + join(summary, "  ");
+    if (!arrays.empty()) {
+        std::vector<std::string> as;
+        for (const char* st : {"OK", "WARNING", "CRITICAL", "UNKNOWN"}) {
+            int n = 0;
+            for (auto& ar : arrays) if (array_status(ar, all) == st) ++n;
+            if (n) as.push_back(paint(std::to_string(n) + " " + st, status_color(st)));
+        }
+        line += "   " + std::to_string(arrays.size()) + " RAID array(s): " + join(as, "  ");
+    }
+    out.push_back(line);
+    if (jstr(meta, "source").value_or("") != "json-files" && meta.contains("sources")) out.push_back(paint(source_summary(meta), "dim"));
     if (auto w = jstr(meta, "warning")) out.push_back(paint(*w, "yellow"));
     return join(out, "\n");
+}
+
+std::string raid_view(const std::vector<RaidArray>& arrays, const std::vector<Result>& results, const Painter& paint, const json& meta) {
+    if (arrays.empty()) {
+        std::string s = "No RAID arrays found.";
+        if (jstr(meta, "source").value_or("") != "json-files")
+            s += "\nChecked: " + std::string(current_os() == OS::Linux ? "Linux md (/proc/mdstat, /sys/block/md*)" :
+                                            current_os() == OS::Windows ? "Storage Spaces (WMI), Intel RST volumes" : "AppleRAID") +
+                 ", and hardware RAID members via smartctl when it is installed.";
+        return s;
+    }
+    std::vector<std::string> L;
+    for (auto& a : arrays) {
+        std::string st = array_status(a, results);
+        L.push_back(paint(a.name, "bold") + "  " + paint(st, status_color(st)) + "  " + paint(state_text(a), state_color(a.state)));
+        std::vector<std::pair<std::string, std::string>> kv = {
+            {"Type", (a.level.empty() ? std::string("RAID") : a.level)}, {"Backend", backend_label(a.backend)},
+            {"State", a.raw_state}, {"Size", fmt_size(a.size_bytes)}, {"Volumes", join(a.volumes, " ")}, {"Id", a.id}, {"Source", a.source}};
+        for (auto& [k, v] : kv) if (!v.empty() && v != "-") L.push_back("  " + ljust(k + ":", 10) + v);
+        L.push_back("  Members:");
+        for (auto& m : a.members) {
+            const Result* r = member_result(m, results);
+            std::string dev = r ? (r->first.dev_type && is_raid_dev_type(*r->first.dev_type) ? disk_label(r->first) : device_label(r->first)) : (m.device.empty() ? std::string("(missing)") : m.device);
+            std::string info = r ? r->first.model.value_or("") + "  " + paint(r->second.status, status_color(r->second.status)) +
+                                       (r->second.health ? " " + std::to_string(*r->second.health) + "%" : "")
+                                 : paint("no SMART data", "dim");
+            std::string role = m.role == "active" ? m.role : paint(m.role, m.role == "spare" || m.role == "journal" ? "" : "red");
+            L.push_back("    " + ljust(m.slot ? "#" + std::to_string(*m.slot) : "", 4) + ljust(dev, 22) + " " + ljust(role, 11) + " " + info);
+        }
+        for (auto& n : a.notes) L.push_back("  " + paint("· " + n, "dim"));
+        L.push_back("");
+    }
+    if (!L.empty()) L.pop_back();
+    return join(L, "\n");
 }
 
 std::string detail_view(const Drive& d, const Assessment& a, const Painter& paint) {

@@ -46,7 +46,10 @@ std::map<std::string, CmdSpec> specs() {
     std::set<std::string> src = {"--from-json"}, rec = {"--no-record", "--record"};
     auto U = [](std::set<std::string> a, const std::set<std::string>& b) { a.insert(b.begin(), b.end()); return a; };
     std::map<std::string, CmdSpec> s;
-    s["status"] = {"colored table of all drives", U({"--json"}, rec), U(COMMON_V, src), {}, ""};
+    s["status"] = {"colored table of all drives and RAID arrays", U({"--json"}, rec), U(COMMON_V, src), {}, ""};
+    s["list"] = {"same as status", U({"--json"}, rec), U(COMMON_V, src), {}, ""};
+    s["raid"] = {"RAID arrays only: state, level, members, rebuild progress (exit 0/1/2 = OK/WARNING/CRITICAL)",
+                 U({"--json"}, rec), U(COMMON_V, src), {}, ""};
     s["detail"] = {"full attribute view of one drive", {"--json"}, U(U(COMMON_V, src), {"--type"}), {"device"},
                    "  device         e.g. /dev/sda, sda, nvme0, disk0, D: or a serial number\n"
                    "  -d, --type T   smartctl -d device type (e.g. sat, nvme) if auto-detect fails\n"};
@@ -80,7 +83,7 @@ std::map<std::string, CmdSpec> specs() {
     return s;
 }
 
-const char* ORDER[] = {"status", "detail", "history", "check", "watch", "selftest", "install-service",
+const char* ORDER[] = {"status", "list", "raid", "detail", "history", "check", "watch", "selftest", "install-service",
                        "uninstall-service", "init-config", "alert-test", "update"};
 
 std::string main_usage() {
@@ -188,7 +191,8 @@ struct Ctx {
     bool jsonl = false;
 };
 
-json results_json(const std::vector<Result>& results, const Changes& changes, const json& meta) {
+json results_json(const std::vector<Result>& results, const Changes& changes, const json& meta,
+                  const std::vector<RaidArray>& arrays = {}, const Changes& array_changes = {}) {
     json j = json::object();
     j["version"] = VERSION;
     j["generated"] = local_now_iso();
@@ -200,6 +204,12 @@ json results_json(const std::vector<Result>& results, const Changes& changes, co
                           {"changes", it == changes.end() ? json::array() : it->second}});
     }
     j["drives"] = drives;
+    json arr = arrays_json(arrays, results);
+    for (auto& a : arr) {
+        auto it = array_changes.find(jstr(a, "id").value_or(""));
+        a["changes"] = it == array_changes.end() ? json::array() : it->second;
+    }
+    j["arrays"] = arr;
     return j;
 }
 
@@ -208,21 +218,63 @@ bool should_record(const Args& a) {
     return a.from_json.empty() || a.has("--record");
 }
 
-std::vector<Result> gather(Ctx& c, json& meta, Changes& changes) {
-    auto results = collect(c.cfg, c.a.from_json, meta);
+struct Gathered {
+    Scan scan;
+    Changes changes, array_changes;
+};
+
+Gathered gather(Ctx& c) {
+    Gathered g;
+    g.scan = scan(c.cfg, c.a.from_json);
     if (should_record(c.a)) {
         History h(c.a.get("--db", default_db()));
-        changes = h.record(results, jstr(meta, "source").value_or("live"));
+        g.changes = h.record(g.scan.results, jstr(g.scan.meta, "source").value_or("live"), "", &g.scan.arrays, &g.array_changes);
     }
-    return results;
+    return g;
+}
+
+std::string worst_of(const Scan& s) {   // drives and arrays; max() by rank, first wins on ties
+    std::string worst = "OK";
+    bool first = true;
+    for (auto& r : s.results) {
+        if (first || status_rank(r.second.status) > status_rank(worst)) worst = r.second.status;
+        first = false;
+    }
+    for (auto& a : s.arrays) {
+        std::string st = array_status(a, s.results);
+        if (first || status_rank(st) > status_rank(worst)) worst = st;
+        first = false;
+    }
+    return worst;
 }
 
 int cmd_status(Ctx& c) {
-    json meta;
-    Changes ch;
-    auto results = gather(c, meta, ch);
-    c.out << (c.a.has("--json") ? dump(results_json(results, ch, meta)) : status_view(results, c.paint, meta, ch)) << "\n";
+    Gathered g = gather(c);
+    const Scan& s = g.scan;
+    c.out << (c.a.has("--json") ? dump(results_json(s.results, g.changes, s.meta, s.arrays, g.array_changes))
+                                : status_view(s.results, c.paint, s.meta, g.changes, s.arrays, g.array_changes)) << "\n";
     return 0;
+}
+
+int cmd_raid(Ctx& c) {
+    Gathered g = gather(c);
+    const Scan& s = g.scan;
+    std::string worst = "OK";
+    for (auto& a : s.arrays) { std::string st = array_status(a, s.results); if (status_rank(st) > status_rank(worst)) worst = st; }
+    if (c.a.has("--json")) {
+        json j = {{"version", VERSION}, {"generated", local_now_iso()}, {"meta", s.meta}};
+        json arr = arrays_json(s.arrays, s.results);
+        for (auto& a : arr) {
+            auto it = g.array_changes.find(jstr(a, "id").value_or(""));
+            a["changes"] = it == g.array_changes.end() ? json::array() : it->second;
+        }
+        j["arrays"] = arr;
+        j["worst"] = worst;
+        c.out << dump(j) << "\n";
+    } else {
+        c.out << raid_view(s.arrays, s.results, c.paint, s.meta) << "\n";
+    }
+    return EXIT_CODE.at(worst);
 }
 
 int cmd_detail(Ctx& c) {
@@ -230,9 +282,9 @@ int cmd_detail(Ctx& c) {
     auto results = collect(c.cfg, c.a.from_json, meta);
     std::string dev = c.a.pos[0];
     auto hit = find_drive(results, dev);
-    if (!hit && c.a.from_json.empty()) {
+    if (!hit && c.a.from_json.empty() && smart_source(c.cfg) != "native") {
         auto path = find_smartctl(jstr(jget(c.cfg, "smartctl"), "path").value_or(""));
-        if (path) {   // not in the scan (e.g. USB bridge): try it directly
+        if (path) {   // not in the scan (e.g. USB bridge): optional smartctl fallback, if installed
             json sudo = jget(jget(c.cfg, "smartctl"), "sudo");
             Smartctl sc(*path, sudo.is_null() ? json("auto") : sudo);
             DeviceRef ref;
@@ -267,22 +319,20 @@ int cmd_history(Ctx& c) {
 }
 
 int cmd_check(Ctx& c) {
-    json meta;
-    Changes ch;
-    auto results = gather(c, meta, ch);
+    Gathered g = gather(c);
+    const Scan& sc = g.scan;
+    const json& meta = sc.meta;
+    const Changes& ch = g.changes;
+    const auto& results = sc.results;
     auto alerts = build_alerts(results, ch);
+    for (auto& al : build_array_alerts(sc.arrays, results, g.array_changes)) alerts.push_back(al);
     std::vector<std::string> sent = c.a.has("--no-alert") ? std::vector<std::string>{} : dispatch(c.cfg, alerts);
     // Opt-in only ([update] auto_check, default false): at most one release check per day; notify, never auto-run.
     json upd = scheduled_update_check(c.cfg, c.a.get("--db", default_db()), !c.a.has("--no-alert"),
                                       static_cast<int64_t>(std::time(nullptr)));
-    std::string worst = "OK";
-    bool first = true;
-    for (auto& r : results) {   // max() by rank; first wins on ties, like Python
-        if (first || status_rank(r.second.status) > status_rank(worst)) worst = r.second.status;
-        first = false;
-    }
+    std::string worst = worst_of(sc);
     if (c.a.has("--json")) {
-        json j = results_json(results, ch, meta);
+        json j = results_json(results, ch, meta, sc.arrays, g.array_changes);
         json al = json::array();
         for (auto& a : alerts) al.push_back({{"severity", a.severity}, {"title", a.title}, {"body", a.body}});
         j["alerts"] = al;
@@ -291,8 +341,20 @@ int cmd_check(Ctx& c) {
         if (!upd.is_null()) j["update"] = upd;
         c.out << (c.jsonl ? j.dump(-1, ' ', true, json::error_handler_t::replace) : dump(j)) << "\n";
     } else if (!c.a.has("--quiet")) {
-        c.out << "[" << local_now_hms() << "] " << results.size() << " drive(s), worst status " << worst << ", "
-              << alerts.size() << " new alert(s)\n";
+        c.out << "[" << local_now_hms() << "] " << results.size() << " drive(s)"
+              << (sc.arrays.empty() ? std::string() : ", " + std::to_string(sc.arrays.size()) + " RAID array(s)")
+              << ", worst status " << worst << ", " << alerts.size() << " new alert(s)\n";
+        if (!sc.arrays.empty() && !c.a.has("--quiet")) {
+            for (auto& a : sc.arrays) {
+                std::string st = array_status(a, results);
+                c.out << "  " << c.paint(a.name, "bold") << "  " << c.paint(st, status_color(st)) << "  " << state_text(a) << "\n";
+                for (auto& m : a.members) {
+                    const Result* r = member_result(m, results);
+                    c.out << "    └ " << (r ? disk_label(r->first) : (m.device.empty() ? std::string("(missing)") : m.device))
+                          << "  " << m.role << "  " << (r ? c.paint(r->second.status, status_color(r->second.status)) : std::string("no SMART data")) << "\n";
+                }
+            }
+        }
         for (auto& al : alerts) c.out << "  ALERT " << al.title << "\n    " << replace_all(al.body, "\n", "\n    ") << "\n";
         for (auto& line : sent) c.out << "  " << line << "\n";
         if (truthy(jget(upd, "checked"))) {
@@ -538,7 +600,8 @@ int run_cli(const std::vector<std::string>& argv, std::ostream& out, std::ostrea
     Ctx c{a, cfg, Painter(a.has("--json") ? "never" : a.get("--color", "auto")), out, err};
     try {
         const std::string& k = a.cmd;
-        if (k == "status") return cmd_status(c);
+        if (k == "status" || k == "list") return cmd_status(c);
+        if (k == "raid") return cmd_raid(c);
         if (k == "detail") return cmd_detail(c);
         if (k == "history") return cmd_history(c);
         if (k == "check") return cmd_check(c);

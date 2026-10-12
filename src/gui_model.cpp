@@ -1,6 +1,7 @@
 #include "gui_model.hpp"
 
 #include <algorithm>
+#include <set>
 
 #include "render.hpp"
 #include "update.hpp"
@@ -116,6 +117,160 @@ std::vector<std::pair<std::string, std::string>> detail_rows(const Drive& d, con
     put("Notes", reasons.empty() ? (d.smart_available ? "No problems found" : join(d.notes, "; "))
                                  : join(reasons, "; "));
     return rows;
+}
+
+std::string tray_status(const std::vector<Result>& results, const std::vector<RaidArray>& arrays) {
+    std::string w = tray_status(results);
+    for (auto& a : arrays) {
+        std::string st = array_status(a, results);
+        if (gui_rank(st) > gui_rank(w)) w = st;
+    }
+    return w;
+}
+
+static std::vector<Result> top_level(const std::vector<Result>& results, const std::vector<RaidArray>& arrays,
+                                     std::vector<int>* idx = nullptr) {
+    std::set<std::string> under = member_keys(arrays);
+    std::vector<std::pair<Result, int>> v;
+    for (size_t i = 0; i < results.size(); ++i)
+        if (!under.count(results[i].first.key())) v.push_back({results[i], static_cast<int>(i)});
+    std::vector<Result> rs;
+    for (auto& p : v) rs.push_back(p.first);
+    std::vector<Result> sorted = sorted_for_display(rs);
+    if (idx) {   // map back to indices into `results` (sorted_for_display is a stable sort over unique keys)
+        idx->clear();
+        std::vector<bool> used(v.size(), false);
+        for (auto& r : sorted)
+            for (size_t k = 0; k < v.size(); ++k)
+                if (!used[k] && v[k].first.first.device == r.first.device && v[k].first.first.key() == r.first.key()) {
+                    used[k] = true;
+                    idx->push_back(v[k].second);
+                    break;
+                }
+    }
+    return sorted;
+}
+
+std::string tooltip_text(const std::vector<Result>& results, const std::vector<RaidArray>& arrays,
+                         const std::string& version, size_t max_len) {
+    if (arrays.empty()) return tooltip_text(results, version, max_len);
+    std::string t = "Hard Drive Monitor " + version;
+    for (auto& r : top_level(results, arrays)) t += "\n" + drive_name(r.first) + " " + health_text(r.second);
+    for (auto& a : arrays) t += "\n" + a.name + " " + state_text(a);
+    return clip(t, max_len);
+}
+
+std::vector<DisplayRow> display_rows(const std::vector<Result>& results, const std::vector<RaidArray>& arrays,
+                                     const std::set<std::string>& collapsed) {
+    std::vector<DisplayRow> rows;
+    std::vector<int> idx;
+    std::vector<Result> top = top_level(results, arrays, &idx);
+    for (size_t i = 0; i < top.size(); ++i) {
+        const auto& [d, a] = top[i];
+        DisplayRow r;
+        r.kind = DisplayRow::DRIVE;
+        r.result = idx[i];
+        r.status = a.status;
+        r.cells[0] = drive_name(d);
+        r.cells[1] = d.model.value_or("");
+        r.cells[2] = size_text(d);
+        r.cells[3] = temp_text(d);
+        r.cells[4] = health_text(a);
+        rows.push_back(r);
+    }
+    for (size_t ai = 0; ai < arrays.size(); ++ai) {
+        const RaidArray& ar = arrays[ai];
+        DisplayRow r;
+        r.kind = DisplayRow::ARRAY;
+        r.array = static_cast<int>(ai);
+        r.bold = true;
+        r.expanded = !collapsed.count(ar.id);
+        r.status = array_status(ar, results);
+        r.cells[0] = std::string(r.expanded ? "\u25BC " : "\u25B6 ") + ar.name;
+        r.cells[1] = (ar.level.empty() ? std::string("RAID") : ar.level) + " \u00B7 " + backend_label(ar.backend);
+        r.cells[2] = ar.size_bytes ? fmt_size(ar.size_bytes) : "\u2014";
+        r.cells[3] = "\u2014";
+        r.cells[4] = state_text(ar);
+        rows.push_back(r);
+        if (!r.expanded) continue;
+        for (size_t mi = 0; mi < ar.members.size(); ++mi) {
+            const ArrayMember& m = ar.members[mi];
+            DisplayRow c;
+            c.kind = DisplayRow::MEMBER;
+            c.array = static_cast<int>(ai);
+            c.member = static_cast<int>(mi);
+            const Result* mr = member_result(m, results);
+            std::string role = m.role == "active" ? "" : " (" + m.role + ")";
+            if (mr) {
+                c.result = static_cast<int>(mr - results.data());
+                c.status = mr->second.status;
+                std::string label = disk_label(mr->first);
+                c.cells[0] = "      " + (label.empty() ? drive_name(mr->first) : label) + role;
+                c.cells[1] = mr->first.model.value_or("");
+                c.cells[2] = size_text(mr->first);
+                c.cells[3] = temp_text(mr->first);
+                c.cells[4] = health_text(mr->second);
+            } else {
+                c.status = m.role == "failed" || m.role == "missing" ? "CRITICAL" : "UNKNOWN";
+                std::string dev = m.device.empty() ? std::string("(missing disk)") : m.device;
+                if (starts_with(dev, "/dev/")) dev = dev.substr(5);
+                c.cells[0] = "      " + dev + role;
+                c.cells[1] = m.serial ? "serial " + *m.serial : "";
+                c.cells[2] = m.size_bytes ? fmt_size(m.size_bytes) : "\u2014";
+                c.cells[3] = "\u2014";
+                c.cells[4] = m.role == "failed" ? "failed" : "n/a";
+            }
+            rows.push_back(c);
+        }
+    }
+    return rows;
+}
+
+std::vector<std::pair<std::string, std::string>> array_detail_rows(const RaidArray& a, const std::vector<Result>& results) {
+    std::vector<std::pair<std::string, std::string>> rows;
+    auto put = [&](const std::string& k, const std::string& v) { rows.emplace_back(k, v); };
+    put("Status", status_label(array_status(a, results)) + " (" + state_text(a) + ")");
+    put("Name", a.name);
+    if (!a.level.empty()) put("Type", a.level);
+    put("Backend", backend_label(a.backend));
+    if (!a.raw_state.empty()) put("State", a.raw_state);
+    if (a.rebuild_pct) put("Rebuild", fmt_fixed(*a.rebuild_pct, 1) + "%");
+    if (a.size_bytes) put("Size", fmt_size(a.size_bytes));
+    if (!a.volumes.empty()) put("Mounted at", join(a.volumes, " "));
+    for (auto& m : a.members) {
+        const Result* r = member_result(m, results);
+        std::string label = r ? (disk_label(r->first).empty() ? drive_name(r->first) : disk_label(r->first)) : m.device;
+        std::string v = m.role + (r ? ", " + status_label(r->second.status) + " " + health_text(r->second) +
+                                          (r->first.model ? ", " + *r->first.model : "")
+                                    : ", no SMART data");
+        put("Member " + (m.slot ? std::to_string(*m.slot) : std::string("-")) + " " + label, v);
+    }
+    if (!a.id.empty()) put("Id", a.id);
+    if (!a.notes.empty()) put("Notes", join(a.notes, "; "));
+    return rows;
+}
+
+bool used_smartctl(const std::vector<Result>& results, const json& meta) {
+    if (jstr(meta, "source") == std::optional<std::string>("json-files")) return false;
+    for (auto& r : results)
+        if (starts_with(r.first.source, "smartctl")) return true;
+    return false;
+}
+
+std::string source_text(const std::vector<Result>& results, const json& meta) {
+    if (jstr(meta, "source") == std::optional<std::string>("json-files")) return "sample data (--from-json)";
+    int native = 0, sc = 0, other = 0;
+    for (auto& r : results) {
+        if (starts_with(r.first.source, "native")) ++native;
+        else if (starts_with(r.first.source, "smartctl")) ++sc;
+        else ++other;
+    }
+    std::vector<std::string> parts;
+    if (native) parts.push_back("native SMART");
+    if (sc) parts.push_back("smartctl" + (jstr(meta, "smartctl_version") ? " " + *jstr(meta, "smartctl_version") : std::string()) +
+                            (jstr(meta, "smart_source_setting") == std::optional<std::string>("smartctl") ? "" : " (fallback)"));
+    if (other) parts.push_back("OS inventory");
+    return parts.empty() ? "" : "source: " + join(parts, " + ");
 }
 
 GuiSettings load_gui_settings(const json& cfg) {

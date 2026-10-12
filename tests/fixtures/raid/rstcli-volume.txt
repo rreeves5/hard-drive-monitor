@@ -1,0 +1,35 @@
+--VOLUME INFORMATION--
+
+Name:              Volume0
+Raid Level:        1
+Size:              931 GB
+StripeSize:        N/A
+Num Disks:         2
+State:             Degraded
+System:            True
+Initialized:       True
+Cache Policy:      Off
+
+--DISKS IN VOLUME: Volume0 --
+
+ID:                0-0-0-0
+Type:              Disk
+Disk Type:         SATA Disk
+State:             Normal
+Size:              932 GB
+Free Size:         0 GB
+System Disk:       False
+Usage:             Array member
+Serial Number:     WD-WCC6Y0SYNTH1
+Model:             WDC WD10EZEX-08WN4A0
+
+ID:                0-1-0-0
+Type:              Disk
+Disk Type:         SATA Disk
+State:             Failed
+Size:              932 GB
+Free Size:         0 GB
+System Disk:       False
+Usage:             Array member
+Serial Number:     WD-WCC6Y0SYNTH2
+Model:             WDC WD10EZEX-08WN4A0

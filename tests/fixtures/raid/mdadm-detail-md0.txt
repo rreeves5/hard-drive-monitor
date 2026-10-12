@@ -1,0 +1,30 @@
+/dev/md0:
+           Version : 1.2
+     Creation Time : Sat Mar 14 10:21:07 2026
+        Raid Level : raid1
+        Array Size : 1953382464 (1862.89 GiB 2000.26 GB)
+     Used Dev Size : 1953382464 (1862.89 GiB 2000.26 GB)
+      Raid Devices : 2
+     Total Devices : 2
+       Persistence : Superblock is persistent
+
+     Intent Bitmap : Internal
+
+       Update Time : Sun Oct 11 19:40:12 2026
+             State : clean, degraded, recovering
+    Active Devices : 1
+   Working Devices : 2
+    Failed Devices : 0
+     Spare Devices : 1
+
+Consistency Policy : bitmap
+
+    Rebuild Status : 37% complete
+
+              Name : nas:0  (local to host nas)
+              UUID : 3b2f6c1e:9a7d4b20:5c8e1f03:7d6a2b94
+            Events : 18342
+
+    Number   Major   Minor   RaidDevice State
+       0       8       17        0      active sync   /dev/sdb1
+       2       8       49        1      spare rebuilding   /dev/sdd1

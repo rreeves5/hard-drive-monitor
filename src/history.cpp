@@ -2,6 +2,7 @@
 
 #include <stdexcept>
 
+#include "raid.hpp"
 #include "sqlite3.h"
 
 namespace hdmon {
@@ -15,6 +16,11 @@ CREATE TABLE IF NOT EXISTS readings(
   status TEXT, health INTEGER, performance INTEGER, temperature INTEGER,
   power_on_hours INTEGER, metrics TEXT);
 CREATE INDEX IF NOT EXISTS ix_readings_drive ON readings(drive_key, run_id);
+CREATE TABLE IF NOT EXISTS array_readings(
+  id INTEGER PRIMARY KEY, run_id INTEGER NOT NULL REFERENCES runs(id),
+  array_id TEXT NOT NULL, name TEXT, backend TEXT, level TEXT, state TEXT, status TEXT,
+  rebuild_pct REAL, members TEXT);
+CREATE INDEX IF NOT EXISTS ix_array_readings ON array_readings(array_id, run_id);
 )SQL";
 
 // Counters that must never go up on a healthy drive. An increase triggers an alert.
@@ -44,6 +50,24 @@ json compare_readings(const json& prev, const std::string& status, std::optional
         if (newv && oldv && *newv > *oldv)
             out.push_back({{"kind", "trend"}, {"metric", k}, {"old", *oldv}, {"new", *newv}, {"alert", false}});
     }
+    return out;
+}
+
+json compare_array_states(const json& prev, const std::string& state) {
+    json out = json::array();
+    bool first = !prev.is_object() || prev.empty();
+    std::string p = first ? "" : jstr(prev, "state").value_or("UNKNOWN");
+    auto add = [&](const char* event, bool alert) {
+        out.push_back({{"kind", "array_state"}, {"metric", "array state"}, {"old", first ? json(nullptr) : json(p)},
+                       {"new", state}, {"event", event}, {"alert", alert}});
+    };
+    if (state == p) return out;
+    if (state == "FAILED") add("failed", true);
+    else if (state == "DEGRADED") add("degraded", p != "FAILED");
+    else if (state == "REBUILDING" && first) add("rebuilding", true);   // first sight mid-rebuild: still running without redundancy
+    else if (state == "REBUILDING" && (p == "OK" || p == "UNKNOWN")) add("rebuild_started", true);
+    else if (state == "REBUILDING" && !first) add("rebuilding", false);
+    else if (state == "OK" && (p == "REBUILDING" || p == "DEGRADED" || p == "FAILED")) add("rebuild_complete", true);
     return out;
 }
 
@@ -113,7 +137,27 @@ json History::last_reading(const std::string& key) {
     return json::object();
 }
 
-Changes History::record(const std::vector<Result>& results, const std::string& source, const std::string& ts_in) {
+json History::last_array_reading(const std::string& id) {
+    Stmt st(db_, "SELECT a.*, runs.ts FROM array_readings a JOIN runs ON runs.id = a.run_id "
+                 "WHERE array_id = ? ORDER BY a.run_id DESC LIMIT 1");
+    st.bind(1, id);
+    if (st.step()) return st.row();
+    return json::object();
+}
+
+json History::array_readings(const std::string& id, int limit) {
+    Stmt st(db_, "SELECT a.*, runs.ts FROM array_readings a JOIN runs ON runs.id = a.run_id WHERE array_id = ? "
+                 "ORDER BY a.run_id DESC LIMIT ?");
+    st.bind(1, id); st.bind(2, static_cast<int64_t>(limit));
+    std::vector<json> rows;
+    while (st.step()) rows.push_back(st.row());
+    json out = json::array();
+    for (auto it = rows.rbegin(); it != rows.rend(); ++it) out.push_back(*it);
+    return out;
+}
+
+Changes History::record(const std::vector<Result>& results, const std::string& source, const std::string& ts_in,
+                        const std::vector<RaidArray>* arrays, Changes* array_changes) {
     std::string ts = ts_in.empty() ? utc_now_iso() : ts_in;
     Changes changes;
     exec("BEGIN");
@@ -131,6 +175,20 @@ Changes History::record(const std::vector<Result>& results, const std::string& s
             ins.bind(7, a.health ? std::optional<int64_t>(*a.health) : std::nullopt);
             ins.bind(8, a.performance ? std::optional<int64_t>(*a.performance) : std::nullopt);
             ins.bind(9, d.temperature_c); ins.bind(10, d.power_on_hours); ins.bind(11, d.metrics.dump());
+            ins.step();
+        }
+        if (arrays) for (auto& a : *arrays) {
+            json prev = last_array_reading(a.id);
+            json ch = compare_array_states(prev, a.state);
+            if (array_changes && !ch.empty()) (*array_changes)[a.id] = ch;
+            json members = json::array();
+            for (auto& m : a.members) members.push_back({{"device", m.device}, {"role", m.role}, {"drive_key", m.drive_key}});
+            Stmt ins(db_, "INSERT INTO array_readings(run_id, array_id, name, backend, level, state, status, rebuild_pct, members)"
+                          " VALUES (?,?,?,?,?,?,?,?,?)");
+            ins.bind(1, run_id); ins.bind(2, a.id); ins.bind(3, a.name); ins.bind(4, a.backend); ins.bind(5, a.level);
+            ins.bind(6, a.state); ins.bind(7, array_status(a, results));
+            if (a.rebuild_pct) sqlite3_bind_double(ins.s, 8, *a.rebuild_pct); else sqlite3_bind_null(ins.s, 8);
+            ins.bind(9, members.dump());
             ins.step();
         }
         exec("COMMIT");

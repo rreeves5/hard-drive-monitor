@@ -46,7 +46,23 @@ std::string config_path() {
 const char* SAMPLE_CONFIG = R"(# Hard Drive Monitor (hdmon) configuration
 # Location: ~/.config/hard-drive-monitor/config.toml  (Windows: %APPDATA%\hard-drive-monitor\config.toml)
 
+[smart]
+# Where SMART data comes from:
+#   "auto"     - read it natively through the OS (default); use smartctl only for drives the native
+#                read cannot handle, and only if smartmontools happens to be installed
+#   "native"   - native only, never run smartctl
+#   "smartctl" - smartmontools only (needs it installed)
+source = "auto"
+
+[raid]
+# Show RAID arrays (Linux md, Windows Storage Spaces, Intel RST, macOS AppleRAID, hardware RAID cards).
+enabled = true
+# Extra controller members for smartctl when --scan-open does not find them, e.g.
+# smartctl_devices = ["/dev/sg0 -d cciss,0", "/dev/sda -d hpt,1/1/1"]
+smartctl_devices = []
+
 [smartctl]
+# Optional fallback only: hdmon does not need smartmontools.
 # path = "/usr/sbin/smartctl"   # leave unset to auto-detect
 # "auto": if smartctl gets "permission denied", retry once with `sudo -n` (needs a sudoers rule)
 sudo = "auto"
@@ -92,6 +108,8 @@ auto_install = false
 
 json default_config() {
     json c = json::object();
+    c["smart"] = {{"source", "auto"}};
+    c["raid"] = {{"enabled", true}, {"smartctl_devices", json::array()}};
     c["smartctl"] = {{"path", ""}, {"sudo", "auto"}};
     c["alerts"] = {{"desktop", true}};
     c["email"] = {{"enabled", false}, {"host", ""}, {"port", 587}, {"starttls", true}, {"ssl", false},

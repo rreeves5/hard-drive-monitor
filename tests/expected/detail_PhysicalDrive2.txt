@@ -16,4 +16,4 @@ PhysicalDrive2  WDC WD20EARX-00PASB0
   CRITICAL Drive's own SMART self-assessment says FAILED - back up now
 
   note: Reliability counters unavailable (run as Administrator, or the driver does not expose them)
-  note: Windows Storage fallback: fewer attributes than smartctl. Install smartmontools for the full SMART view.
+  note: Windows Storage fallback: fewer attributes than native SMART. Run as Administrator for the full SMART view.

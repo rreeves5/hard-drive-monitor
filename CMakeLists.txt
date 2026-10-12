@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(hard_drive_monitor VERSION 0.2.3 LANGUAGES C CXX)
+project(hard_drive_monitor VERSION 0.2.4 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -28,7 +28,9 @@ endif()
 add_library(hdmon_core STATIC
   src/util.cpp src/config.cpp src/smart.cpp src/health.cpp src/history.cpp
   src/alerts.cpp src/service.cpp src/render.cpp src/collect.cpp src/cli.cpp src/update.cpp
-  src/gui_model.cpp src/autostart.cpp)
+  src/gui_model.cpp src/autostart.cpp
+  src/native_smart.cpp src/native_linux.cpp src/native_windows.cpp src/native_macos.cpp
+  src/raid.cpp src/raid_live.cpp src/wmi.cpp)
 target_include_directories(hdmon_core PUBLIC src third_party)
 target_link_libraries(hdmon_core PUBLIC hdmon_sqlite)
 target_compile_definitions(hdmon_core PRIVATE HDMON_VERSION="Beta V ${PROJECT_VERSION}")
@@ -40,7 +42,10 @@ else()
 endif()
 if(WIN32)
   target_compile_definitions(hdmon_core PUBLIC UNICODE _UNICODE NOMINMAX)
-  target_link_libraries(hdmon_core PUBLIC shell32 advapi32)
+  target_link_libraries(hdmon_core PUBLIC shell32 advapi32 ole32 oleaut32 wbemuuid)
+endif()
+if(APPLE)
+  target_link_libraries(hdmon_core PUBLIC "-framework IOKit" "-framework CoreFoundation")
 endif()
 find_package(Threads REQUIRED)
 target_link_libraries(hdmon_core PUBLIC Threads::Threads)
