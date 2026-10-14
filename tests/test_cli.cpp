@@ -1,5 +1,6 @@
 // Port of tests/test_cli.py (in-process via run_cli)
 #include "helpers.hpp"
+#include "alerts.hpp"
 
 using namespace hdmon;
 using th::run;
@@ -113,4 +114,18 @@ TEST_CASE("[alerts] warn_drop_percent: WARNING at health <= 100 - drop, never lo
     CHECK(status_of("/dev/sdb") == "CRITICAL");
     write_file(cfg, "[alerts]\nwarn_drop_percent = 99\n");
     CHECK(status_of("/dev/sdb") == "CRITICAL");
+}
+
+TEST_CASE("minimal alert line and [alerts] min_level") {
+    Drive d;
+    d.device = "\\\\.\\PhysicalDrive0";
+    d.volumes = {"C:"};
+    d.model = "NX-2TB";
+    Assessment a{88, 100, "WARNING", {}};
+    CHECK(alert_line(d, a) == "C: NX-2TB, Warning, 88%");
+    std::vector<Alert> al{{"WARNING", "Hard Drive Monitor", "C: NX-2TB, Warning, 88%"},
+                          {"CRITICAL", "Hard Drive Monitor", "D: X, Critical, 20%"}};
+    CHECK(filter_alerts(json::object(), al).size() == 2);
+    CHECK(filter_alerts(json{{"alerts", {{"min_level", "critical"}}}}, al).size() == 1);
+    CHECK(alert_text(al) == "C: NX-2TB, Warning, 88%\nD: X, Critical, 20%");
 }

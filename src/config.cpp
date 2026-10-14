@@ -71,6 +71,8 @@ sudo = "auto"
 desktop = true
 # warn_drop_percent: WARNING (yellow) once health has dropped this much (10 -> at 90% or less). 1-99.
 warn_drop_percent = 10
+# min_level: "warning" (default) alerts at yellow or worse; "critical" alerts only at red.
+min_level = "warning"
 
 [email]
 # Sent with the `curl` command-line tool (built into Windows 10+, macOS and most Linux distros).
@@ -118,7 +120,7 @@ json default_config() {
     c["smart"] = {{"source", "auto"}};
     c["raid"] = {{"enabled", true}, {"smartctl_devices", json::array()}};
     c["smartctl"] = {{"path", ""}, {"sudo", "auto"}};
-    c["alerts"] = {{"desktop", true}, {"warn_drop_percent", 10}};
+    c["alerts"] = {{"desktop", true}, {"warn_drop_percent", 10}, {"min_level", "warning"}};
     c["email"] = {{"enabled", false}, {"host", ""}, {"port", 587}, {"starttls", true}, {"ssl", false},
                   {"username", ""}, {"password", ""}, {"password_env", "HDMON_SMTP_PASSWORD"},
                   {"from", ""}, {"to", json::array()}};

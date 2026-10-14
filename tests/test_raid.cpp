@@ -336,7 +336,9 @@ TEST_CASE("history records array state and alerts on degrade and rebuild complet
     REQUIRE(ch.count(a.id) == 1);
     auto al = build_array_alerts(arrs, rs, ch);
     REQUIRE(al.size() == 1);
-    CHECK(al[0].title == "Hard Drive Monitor: RAID md0 degraded");
+    CHECK(al[0].title == "Hard Drive Monitor");
+    CHECK(th::has(al[0].body, "md0"));
+    CHECK(th::has(al[0].body, "Degraded"));
     CHECK(al[0].severity == "WARNING");
     CHECK(h.last_array_reading(a.id)["state"] == "DEGRADED");
 
@@ -352,7 +354,7 @@ TEST_CASE("history records array state and alerts on degrade and rebuild complet
     h.record(rs, "test", "2026-10-11T14:00:00Z", &arrs, &ch);
     al = build_array_alerts(arrs, rs, ch);
     REQUIRE(al.size() == 1);
-    CHECK(al[0].title == "Hard Drive Monitor: RAID md0 rebuild complete");
+    CHECK(th::has(al[0].body, "Rebuild complete"));
     CHECK(al[0].severity == "OK");
     CHECK(h.array_readings(a.id).size() == 4);
 }

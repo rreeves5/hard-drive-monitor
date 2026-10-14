@@ -209,7 +209,7 @@ public:
 class AlertDialog : public wxDialog {
 public:
     AlertDialog(const std::vector<Alert>& alerts)
-        : wxDialog(nullptr, wxID_ANY, "Hard Drive Monitor - drive in danger", wxDefaultPosition, wxDefaultSize,
+        : wxDialog(nullptr, wxID_ANY, "Hard Drive Monitor", wxDefaultPosition, wxDefaultSize,
                    wxDEFAULT_DIALOG_STYLE | wxSTAY_ON_TOP) {
         SetIcon(circle_icon("CRITICAL"));
         auto* top = new wxBoxSizer(wxVERTICAL);
@@ -222,11 +222,7 @@ public:
         hs->Add(ht, 0, wxALL, FromDIP(10));
         head->SetSizer(hs);
         top->Add(head, 0, wxEXPAND);
-        std::string body;
-        for (auto& a : alerts) body += a.title + "\n" + a.body + "\n\n";
-        bool raid_only = true;
-        for (auto& a : alerts) raid_only = raid_only && contains(a.title, ": RAID ");
-        if (!raid_only) body += "Back up anything important on this drive now.";
+        std::string body = alert_text(alerts);
         auto* bt = new wxStaticText(this, wxID_ANY, U(body));
         bt->Wrap(FromDIP(420));
         top->Add(bt, 1, wxALL | wxEXPAND, FromDIP(14));
@@ -251,6 +247,14 @@ public:
         alert_->SetValue(s.alert_on_danger);
         top->Add(run_, 0, wxLEFT | wxRIGHT | wxTOP, pad);
         top->Add(alert_, 0, wxLEFT | wxRIGHT | wxTOP, pad);
+        auto* lv = new wxBoxSizer(wxHORIZONTAL);
+        lv->Add(new wxStaticText(this, wxID_ANY, "Alert on:"), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
+        level_ = new wxChoice(this, wxID_ANY);
+        level_->Append("Yellow (warning)");
+        level_->Append("Red (critical only)");
+        level_->SetSelection(s.critical_only ? 1 : 0);
+        lv->Add(level_, 0, wxALIGN_CENTER_VERTICAL);
+        top->Add(lv, 0, wxLEFT | wxRIGHT | wxTOP, pad);
         auto* wr = new wxBoxSizer(wxHORIZONTAL);
         wr->Add(new wxStaticText(this, wxID_ANY, "Warn when health drops by:"), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
         drop_ = new wxSpinCtrl(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, wxSP_ARROW_KEYS, 1, 99,
@@ -300,6 +304,7 @@ public:
     g::GuiSettings Result() const {
         g::GuiSettings s;
         s.alert_on_danger = alert_->GetValue();
+        s.critical_only = level_->GetSelection() == 1;
         s.warn_drop_percent = drop_->GetValue();
         s.scan_interval_minutes = interval_->GetValue();
         s.auto_check = check_->GetValue();
@@ -310,6 +315,7 @@ private:
     wxCheckBox *run_, *alert_, *check_;
     wxSpinCtrl* interval_;
     wxSpinCtrl* drop_;
+    wxChoice* level_;
     wxStaticText* status_;
 
     void SetStatus(const std::string& t) {
@@ -804,12 +810,10 @@ void HdmonApp::ScanNow() {
                 Changes ch = h.record(out.results, jstr(out.meta, "source").value_or("live"), "", &out.arrays, &ach);
                 out.alerts = build_alerts(out.results, ch);
                 for (auto& a : build_array_alerts(out.arrays, out.results, ach)) out.alerts.push_back(a);
+                out.alerts = filter_alerts(cfg, out.alerts);   // [alerts] min_level
                 if (!out.alerts.empty() && truthy(jget(jget(cfg, "email"), "enabled")) &&
                     g::load_gui_settings(cfg).alert_on_danger) {
-                    std::vector<std::string> parts;
-                    for (auto& a : out.alerts) parts.push_back(a.title + "\n" + a.body);
-                    send_email(cfg, out.alerts.size() == 1 ? out.alerts[0].title : "Hard Drive Monitor: drives need attention",
-                               join(parts, "\n\n"));
+                    send_email(cfg, "Hard Drive Monitor", alert_text(out.alerts));
                 }
                 scheduled_update_check(cfg, db, true, static_cast<int64_t>(std::time(nullptr)), UpdateFlavor::Gui);
             }
@@ -861,15 +865,12 @@ void HdmonApp::OnScanDone(ScanOutcome out) {
     std::vector<Alert> danger, info;
     for (auto& a : alerts) (a.severity == "OK" ? info : danger).push_back(a);   // OK = RAID rebuild complete
     if (!danger.empty() && settings_.alert_on_danger) {
-        std::string tip;
-        for (auto& a : danger) tip += (tip.empty() ? "" : "\n") + a.title;
-        Notify("Hard Drive Monitor - drive in danger", tip, true);
+        Notify("Hard Drive Monitor", alert_text(danger), true);
         auto* dlg = new AlertDialog(danger);
         dlg->Show();
         dlg->Raise();
     }
-    for (auto& a : info)
-        if (settings_.alert_on_danger) Notify(a.title, a.body, false);
+    if (!info.empty() && settings_.alert_on_danger) Notify("Hard Drive Monitor", alert_text(info), false);
 }
 
 void HdmonApp::Restart() {

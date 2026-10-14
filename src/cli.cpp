@@ -328,6 +328,7 @@ int cmd_check(Ctx& c) {
     const auto& results = sc.results;
     auto alerts = build_alerts(results, ch);
     for (auto& al : build_array_alerts(sc.arrays, results, g.array_changes)) alerts.push_back(al);
+    alerts = filter_alerts(c.cfg, alerts);   // [alerts] min_level
     std::vector<std::string> sent = c.a.has("--no-alert") ? std::vector<std::string>{} : dispatch(c.cfg, alerts);
     // Opt-in only ([update] auto_check, default false): at most one release check per day; notify, never auto-run.
     json upd = scheduled_update_check(c.cfg, c.a.get("--db", default_db()), !c.a.has("--no-alert"),

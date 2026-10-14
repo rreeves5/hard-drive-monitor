@@ -1,3 +1,4 @@
+#include <cctype>
 #include "alerts.hpp"
 #include "osnative.hpp"
 
@@ -27,25 +28,25 @@ std::string drive_label(const Drive& d) {
     return trim(d.device + vol + " " + d.model.value_or(""));
 }
 
+static std::string title_case(std::string s) {
+    for (size_t i = 0; i < s.size(); ++i) s[i] = static_cast<char>(i ? std::tolower(static_cast<unsigned char>(s[i])) : std::toupper(static_cast<unsigned char>(s[i])));
+    return s;
+}
+
+// One line per drive: "C: NX-2TB, Warning, 88%".
+std::string alert_line(const Drive& d, const Assessment& a) {
+    std::string name = trim((d.volumes.empty() ? d.device : d.volumes[0]) + " " + d.model.value_or(""));
+    return name + ", " + title_case(a.status) + (a.health ? ", " + std::to_string(*a.health) + "%" : std::string());
+}
+
 std::vector<Alert> build_alerts(const std::vector<Result>& results, const Changes& changes) {
     std::vector<Alert> out;
     for (auto& [d, a] : results) {
         auto it = changes.find(d.key());
         if (it == changes.end()) continue;
-        std::vector<std::string> lines;
-        for (auto& c : it->second) {
-            if (!truthy(jget(c, "alert"))) continue;
-            if (jget(c, "kind") == "status") lines.push_back("Status worsened: " + to_str(c["old"]) + " -> " + to_str(c["new"]));
-            else {
-                int64_t o = opt_int(c["old"]).value_or(0), n = opt_int(c["new"]).value_or(0);
-                lines.push_back(pretty(to_str(c["metric"])) + ": " + std::to_string(o) + " -> " + std::to_string(n) + " (+" + std::to_string(n - o) + ")");
-            }
-        }
-        if (lines.empty()) continue;
-        lines.push_back("Health " + (a.health ? std::to_string(*a.health) : std::string("None")) + "%  Performance " +
-                        (a.performance ? std::to_string(*a.performance) : std::string("None")) + "%  Status " + a.status);
-        for (auto& r : a.reasons()) lines.push_back("- " + r);
-        out.push_back({a.status, "Hard Drive Monitor " + a.status + ": " + drive_label(d), join(lines, "\n")});
+        bool hit = false;
+        for (auto& c : it->second) hit = hit || truthy(jget(c, "alert"));
+        if (hit) out.push_back({a.status, "Hard Drive Monitor", alert_line(d, a)});
     }
     return out;
 }
@@ -59,27 +60,27 @@ std::vector<Alert> build_array_alerts(const std::vector<RaidArray>& arrays, cons
         for (auto& c : it->second) {
             if (!truthy(jget(c, "alert"))) continue;
             std::string ev = jstr(c, "event").value_or("");
-            std::string what = ev == "failed" ? "FAILED" : ev == "degraded" ? "degraded" : ev == "rebuild_started" ? "rebuild started"
-                             : ev == "rebuild_complete" ? "rebuild complete" : ev == "rebuilding" ? "rebuilding" : ev;
-            std::string status = array_status(a, results);
-            std::vector<std::string> lines;
-            std::string old = jget(c, "old").is_null() ? std::string("first seen") : to_str(c["old"]);
-            lines.push_back(backend_label(a.backend) + " " + a.level + ": " + old + " -> " + a.state +
-                            (a.rebuild_pct && a.state == "REBUILDING" ? " (" + fmt_fixed(*a.rebuild_pct, 1) + "%)" : ""));
-            for (auto& m : a.members) {
-                const Result* r = member_result(m, results);
-                std::string label = r ? drive_label(r->first) : (m.device.empty() ? std::string("(missing disk)") : m.device);
-                std::string st = r ? "SMART " + r->second.status + (r->second.health ? " " + std::to_string(*r->second.health) + "%" : "") : "no SMART data";
-                std::string rt = member_role_text(m);
-                lines.push_back("- " + label + ": " + member_status(m, r) + " (" + (rt.empty() ? m.role : rt) + "), " + st);
-            }
-            if (ev == "rebuilding") lines.push_back("The array has no redundancy until the rebuild finishes.");
-            if (ev == "degraded" || ev == "failed") lines.push_back("Back up the data on this array now and replace the failed disk.");
-            out.push_back({ev == "rebuild_complete" ? std::string("OK") : status,
-                           "Hard Drive Monitor: RAID " + a.name + " " + what, join(lines, "\n")});
+            std::string state = ev == "rebuild_complete" ? "Rebuild complete" : title_case(a.state);
+            if (a.rebuild_pct && a.state == "REBUILDING") state += ", " + fmt_fixed(*a.rebuild_pct, 0) + "%";
+            out.push_back({ev == "rebuild_complete" ? std::string("OK") : array_status(a, results), "Hard Drive Monitor",
+                           trim(a.name + " " + a.level) + ", " + state});
         }
     }
     return out;
+}
+
+std::vector<Alert> filter_alerts(const json& cfg, std::vector<Alert> alerts) {
+    if (jstr(jget(cfg, "alerts"), "min_level").value_or("warning") != "critical") return alerts;
+    std::vector<Alert> out;
+    for (auto& a : alerts)
+        if (a.severity == "CRITICAL") out.push_back(a);
+    return out;
+}
+
+std::string alert_text(const std::vector<Alert>& alerts) {
+    std::vector<std::string> l;
+    for (auto& a : alerts) l.push_back(a.body);
+    return join(l, "\n");
 }
 
 static std::string clip(const std::string& s, size_t n) { return u8substr(s, n); }
@@ -190,16 +191,11 @@ std::vector<std::string> dispatch(const json& cfg, const std::vector<Alert>& ale
     if (alerts.empty()) return log;
     const json& desk = jget(jget(cfg, "alerts"), "desktop");
     if (desk.is_null() || truthy(desk)) {
-        for (auto& a : alerts) {
-            auto [ok, info] = notify_desktop(a.title, a.body);
-            log.push_back(std::string("desktop: ") + (ok ? "ok" : "skipped/failed") + " (" + info + ")");
-        }
+        auto [ok, info] = notify_desktop("Hard Drive Monitor", alert_text(alerts));
+        log.push_back(std::string("desktop: ") + (ok ? "ok" : "skipped/failed") + " (" + info + ")");
     }
     if (truthy(jget(jget(cfg, "email"), "enabled"))) {
-        std::string subject = alerts.size() == 1 ? alerts[0].title : "Hard Drive Monitor: " + std::to_string(alerts.size()) + " drives need attention";
-        std::vector<std::string> parts;
-        for (auto& a : alerts) parts.push_back(a.title + "\n" + a.body);
-        auto [ok, info] = send_email(cfg, subject, join(parts, "\n\n"));
+        auto [ok, info] = send_email(cfg, "Hard Drive Monitor", alert_text(alerts));
         (void)ok;
         log.push_back("email: " + info);
     }

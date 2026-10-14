@@ -72,7 +72,8 @@ struct GuiSettings {
     bool alert_on_danger = true;
     int scan_interval_minutes = 60;
     bool auto_check = false;     // [update] auto_check
-    int warn_drop_percent = 10;  // [alerts] warn_drop_percent (1..99)
+    int warn_drop_percent = 10;
+    bool critical_only = false;  // [alerts] min_level = "critical"  // [alerts] warn_drop_percent (1..99)
 };
 GuiSettings load_gui_settings(const json& cfg);
 // Writes the four keys back with set_config_value (keeps the rest of the file).

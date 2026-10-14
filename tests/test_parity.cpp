@@ -77,8 +77,8 @@ TEST_CASE("history changes and alert text match Python") {
     REQUIRE(alerts.size() == exp["alerts"].size());
     for (size_t i = 0; i < alerts.size(); ++i) {
         CHECK(alerts[i].severity == exp["alerts"][i]["severity"].get<std::string>());
-        CHECK(alerts[i].title == exp["alerts"][i]["title"].get<std::string>());
-        CHECK(alerts[i].body == exp["alerts"][i]["body"].get<std::string>());
+        CHECK(alerts[i].title == "Hard Drive Monitor");            // 0.2.10: minimal one-line alerts (no Python parity)
+        CHECK_FALSE(th::has(alerts[i].body, "\n"));
     }
 }
 

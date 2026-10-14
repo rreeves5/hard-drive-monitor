@@ -31,7 +31,7 @@ TEST_CASE("records and flags increase") {
     CHECK(got["pending_sectors"] == std::make_pair<int64_t, int64_t>(16, 21));
     auto alerts = build_alerts(later, c3);
     REQUIRE(alerts.size() == 1);
-    CHECK(th::has(alerts[0].body, "reallocated sectors: 120 -> 152 (+32)"));
+    CHECK_FALSE(th::has(alerts[0].body, "\n"));                 // minimal: one line per drive
     CHECK(th::has(alerts[0].title, "Hard Drive Monitor"));
     json summ = h.summary();
     json sdb;
