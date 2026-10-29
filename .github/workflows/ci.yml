@@ -6,6 +6,11 @@ on:
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Publish a GitHub release for this existing tag (e.g. v0.2.11) from this run's build"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -169,9 +174,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Linux - GTK 3 headers
+      - name: Linux - GTK 3 + image library headers
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev
+        # wx uses the system zlib/libpng/libjpeg on Linux (cmake/gui.cmake); ubuntu-latest no longer ships libjpeg-dev
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libjpeg-dev libpng-dev zlib1g-dev
 
       - name: Configure (wxWidgets fetched and linked statically)
         shell: bash
@@ -208,7 +214,7 @@ jobs:
 
   release:
     name: GitHub release (tags v*)
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.release_tag != ''
     needs: [build-test, gui]
     runs-on: ubuntu-latest
     permissions:
@@ -223,10 +229,15 @@ jobs:
       - name: Release title
         id: ver
         shell: bash
-        run: echo "v=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+        env:
+          TAG: ${{ inputs.release_tag || github.ref_name }}
+        run: |
+          echo "v=${TAG#v}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
       - uses: softprops/action-gh-release@v2
         with:
           files: release/*
+          tag_name: ${{ steps.ver.outputs.tag }}
           name: "Hard Drive Monitor Beta V ${{ steps.ver.outputs.v }}"
           make_latest: true
           generate_release_notes: true
