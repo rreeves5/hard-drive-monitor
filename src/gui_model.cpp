@@ -89,6 +89,12 @@ std::string tooltip_text(const std::vector<Result>& results, const std::string& 
 }
 std::string tooltip_scanning(const std::string& version) { return "Hard Drive Monitor " + version + " - scanning..."; }
 std::string tooltip_failed(const std::string& version) { return "Hard Drive Monitor " + version + " - last scan failed"; }
+std::string tooltip_silenced(const std::string& tip, size_t max_len) {
+    std::string t = tip;   // pass the uncut tooltip, so the mark is never lost to clipping
+    auto nl = t.find('\n');
+    t.insert(nl == std::string::npos ? t.size() : nl, " (silenced)");
+    return clip(t, max_len);
+}
 
 std::vector<std::pair<std::string, std::string>> detail_rows(const Drive& d, const Assessment& a) {
     std::vector<std::pair<std::string, std::string>> rows;

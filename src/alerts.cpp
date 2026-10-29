@@ -1,5 +1,6 @@
 #include <cctype>
 #include "alerts.hpp"
+#include "silence.hpp"
 #include "osnative.hpp"
 
 #include "raid.hpp"
@@ -190,7 +191,9 @@ std::vector<std::string> dispatch(const json& cfg, const std::vector<Alert>& ale
     std::vector<std::string> log;
     if (alerts.empty()) return log;
     const json& desk = jget(jget(cfg, "alerts"), "desktop");
-    if (desk.is_null() || truthy(desk)) {
+    if ((desk.is_null() || truthy(desk)) && silenced()) {
+        log.push_back("desktop: silenced until next reboot");
+    } else if (desk.is_null() || truthy(desk)) {
         auto [ok, info] = notify_desktop("Hard Drive Monitor", alert_text(alerts));
         log.push_back(std::string("desktop: ") + (ok ? "ok" : "skipped/failed") + " (" + info + ")");
     }

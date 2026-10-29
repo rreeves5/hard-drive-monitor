@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(hard_drive_monitor VERSION 0.2.10 LANGUAGES C CXX)
+project(hard_drive_monitor VERSION 0.2.11 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -28,7 +28,7 @@ endif()
 add_library(hdmon_core STATIC
   src/util.cpp src/config.cpp src/smart.cpp src/health.cpp src/history.cpp
   src/alerts.cpp src/service.cpp src/render.cpp src/collect.cpp src/cli.cpp src/update.cpp
-  src/gui_model.cpp src/autostart.cpp
+  src/gui_model.cpp src/autostart.cpp src/silence.cpp
   src/native_smart.cpp src/native_linux.cpp src/native_windows.cpp src/native_macos.cpp
   src/raid.cpp src/raid_live.cpp src/raid_macos.cpp src/wmi.cpp src/dbus.cpp src/notify_native.cpp src/tasksched_win.cpp src/launchd_macos.cpp)
 target_include_directories(hdmon_core PUBLIC src third_party)

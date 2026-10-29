@@ -9,6 +9,7 @@
 #include "gui_model.hpp"
 #include "raid.hpp"
 #include "render.hpp"
+#include "silence.hpp"
 #include "update.hpp"
 
 #include <wx/wx.h>
@@ -205,7 +206,9 @@ public:
     }
 };
 
-// VB AlertForm: red header, always on top, modeless.
+static void app_set_silenced(bool on);   // HdmonApp::SetSilenced (defined after the app class)
+
+// VB AlertForm: red header, always on top, modeless. "Silence until next reboot" sits left of OK.
 class AlertDialog : public wxDialog {
 public:
     AlertDialog(const std::vector<Alert>& alerts)
@@ -226,8 +229,18 @@ public:
         auto* bt = new wxStaticText(this, wxID_ANY, U(body));
         bt->Wrap(FromDIP(420));
         top->Add(bt, 1, wxALL | wxEXPAND, FromDIP(14));
+        auto* row = new wxBoxSizer(wxHORIZONTAL);
+        auto* quiet = new wxCheckBox(this, wxID_ANY, "Silence until next reboot");
+        quiet->SetValue(silenced());
+        quiet->Bind(wxEVT_CHECKBOX, [](wxCommandEvent& e) {
+            bool on = e.IsChecked();
+            app_set_silenced(on);
+        });
+        row->Add(quiet, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(14));
+        row->AddStretchSpacer();
         auto* ok = new wxButton(this, wxID_OK, "OK");
-        top->Add(ok, 0, wxALIGN_RIGHT | wxRIGHT | wxBOTTOM, FromDIP(12));
+        row->Add(ok, 0, wxRIGHT, FromDIP(12));
+        top->Add(row, 0, wxEXPAND | wxBOTTOM, FromDIP(12));
         SetSizerAndFit(top);
         Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { Destroy(); }, wxID_OK);
         Bind(wxEVT_CLOSE_WINDOW, [this](wxCloseEvent&) { Destroy(); });
@@ -505,7 +518,7 @@ private:
 };
 
 // ------------------------------------------------------------------ tray
-enum { ID_OPEN = wxID_HIGHEST + 1, ID_SCAN, ID_OPTIONS, ID_ABOUT, ID_EXIT };
+enum { ID_OPEN = wxID_HIGHEST + 1, ID_SCAN, ID_OPTIONS, ID_ABOUT, ID_SILENCE, ID_EXIT };
 class TrayIcon : public wxTaskBarIcon {
 public:
     TrayIcon();
@@ -529,6 +542,10 @@ public:
     void ShowAbout();
     void ScanNow();
     void ExitApp();
+    void SetSilenced(bool on) {   // alert window checkbox + tray menu item
+        hdmon::set_silenced(on);
+        Refresh();
+    }
     void ShowTrayMenu() {
         if (tray_) {
             std::unique_ptr<wxMenu> m(tray_->MakeMenu());
@@ -565,6 +582,10 @@ private:
 
 wxIMPLEMENT_APP_NO_MAIN(HdmonApp);
 
+static void app_set_silenced(bool on) {
+    wxGetApp().CallAfter([on] { wxGetApp().SetSilenced(on); });
+}
+
 TrayIcon::TrayIcon() {
     Bind(wxEVT_TASKBAR_LEFT_DCLICK, [](wxTaskBarIconEvent&) { wxGetApp().CallAfter([] { wxGetApp().ShowWindow(); }); });
 #ifdef __WXGTK__
@@ -585,6 +606,8 @@ wxMenu* TrayIcon::MakeMenu() {
     m->Append(ID_OPTIONS, "Options");
     m->Append(ID_ABOUT, "About");
     m->AppendSeparator();
+    m->AppendCheckItem(ID_SILENCE, "Silence until next reboot")->Check(silenced());
+    m->AppendSeparator();
     m->Append(ID_EXIT, "Exit");
     m->Bind(wxEVT_MENU, [](wxCommandEvent& e) {
         int id = e.GetId();
@@ -594,6 +617,7 @@ wxMenu* TrayIcon::MakeMenu() {
             else if (id == ID_SCAN) app.ScanNow();
             else if (id == ID_OPTIONS) app.ShowOptions();
             else if (id == ID_ABOUT) app.ShowAbout();
+            else if (id == ID_SILENCE) app.SetSilenced(!silenced());
             else if (id == ID_EXIT) app.ExitApp();
         });
     });
@@ -696,7 +720,8 @@ bool HdmonApp::OnInit() {
 
     if (wxTaskBarIcon::IsAvailable()) {
         tray_ = new TrayIcon();
-        tray_->SetIcon(circle_icon("UNKNOWN"), U(g::tooltip_scanning(GUI_VERSION)));
+        tray_->SetIcon(circle_icon("UNKNOWN"),
+                       U(silenced() ? g::tooltip_silenced(g::tooltip_scanning(GUI_VERSION)) : g::tooltip_scanning(GUI_VERSION)));
 #ifdef __WXMSW__
         wxNotificationMessage::UseTaskBarIcon(tray_);
 #endif
@@ -843,11 +868,14 @@ std::string HdmonApp::StatusLine() const {
 
 void HdmonApp::Refresh() {
     if (tray_) {
-        if (scanning_ && !have_) tray_->SetIcon(circle_icon("UNKNOWN"), U(g::tooltip_scanning(GUI_VERSION)));
-        else if (!last_.error.empty()) tray_->SetIcon(circle_icon("UNKNOWN"), U(g::tooltip_failed(GUI_VERSION)));
+        const size_t limit = current_os() == OS::Windows ? 127 : 1000;
+        const bool quiet = silenced();
+        auto tip = [&](const std::string& t) { return U(quiet ? g::tooltip_silenced(t, limit) : t); };
+        if (scanning_ && !have_) tray_->SetIcon(circle_icon("UNKNOWN"), tip(g::tooltip_scanning(GUI_VERSION)));
+        else if (!last_.error.empty()) tray_->SetIcon(circle_icon("UNKNOWN"), tip(g::tooltip_failed(GUI_VERSION)));
         else if (have_)
             tray_->SetIcon(circle_icon(g::tray_status(last_.results, last_.arrays)),
-                           U(g::tooltip_text(last_.results, last_.arrays, GUI_VERSION, current_os() == OS::Windows ? 127 : 1000)));
+                           tip(g::tooltip_text(last_.results, last_.arrays, GUI_VERSION, quiet ? std::string::npos : limit)));
     }
     if (frame_) frame_->ShowScan(last_.results, last_.arrays, have_, scanning_, StatusLine());
 }
@@ -864,6 +892,10 @@ void HdmonApp::OnScanDone(ScanOutcome out) {
     settings_ = g::load_gui_settings(Config());
     std::vector<Alert> danger, info;
     for (auto& a : alerts) (a.severity == "OK" ? info : danger).push_back(a);   // OK = RAID rebuild complete
+    if (!alerts.empty() && silenced()) {   // "Silence until next reboot": recorded in history.db, no pop-ups
+        std::fprintf(stderr, "hdmon-gui: %zu alert(s) silenced until next reboot\n", alerts.size());
+        return;
+    }
     if (!danger.empty() && settings_.alert_on_danger) {
         Notify("Hard Drive Monitor", alert_text(danger), true);
         auto* dlg = new AlertDialog(danger);

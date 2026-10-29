@@ -35,6 +35,8 @@ std::vector<Result> sorted_for_display(std::vector<Result> results);
 std::string tooltip_text(const std::vector<Result>& results, const std::string& version, size_t max_len = 127);
 std::string tooltip_scanning(const std::string& version);
 std::string tooltip_failed(const std::string& version);
+// "Silence until next reboot" on: " (silenced)" after the first line, still cut to max_len.
+std::string tooltip_silenced(const std::string& tip, size_t max_len = 127);
 
 // ---- RAID in the drive list
 // Arrays count toward the tray colour like drives (array status = worst of array state and member health).

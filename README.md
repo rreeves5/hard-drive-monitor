@@ -386,6 +386,10 @@ uncorrected errors. A drive that has had 12 reallocated sectors for a year does 
 alerts again the moment it becomes 13. Wear and unsafe-shutdown counts rise normally, so they are shown as
 trends in `hdmon history` but do not alert on their own.
 
+- Silence until next reboot (0.2.11): a checkbox on the red alert window and a checkable tray menu item. While on, no
+  desktop pop-ups (alert window, tray balloon, scheduled `hdmon check` notification); scans, history and e-mail
+  continue and the tray tooltip says "(silenced)". It survives an app restart and clears when the computer reboots
+  (marker file `silence-until-reboot` in the data dir holds the boot time).
 - `[alerts] min_level = "warning"` (default) or `"critical"` (GUI Options "Alert on"). Alerts are one line per drive, e.g. `C: NX-2TB, Warning, 88%`.
 - Desktop (native since 0.2.5): Linux sends `org.freedesktop.Notifications.Notify` over the D-Bus session bus
   directly; Windows shows a `Shell_NotifyIcon` balloon; macOS uses `UNUserNotificationCenter` inside the app
