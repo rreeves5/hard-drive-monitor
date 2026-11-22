@@ -1,5 +1,6 @@
 // Hard Drive Monitor desktop app (hdmon-gui): C++/wxWidgets port of the VB.NET DiskMonitor tray app.
-// Tray circle in the worst drive's colour, drive list window, Details, Options (incl. Updates), About,
+// Tray: app icon above a status circle (worst drive's colour), both with a black stroke; drive list,
+// Details, Options (incl. Updates), About,
 // danger alerts. Scanning, scoring, history, alerts, config and updates all come from hdmon_core.
 // hdmon headers first: <windows.h> (pulled in by wx) defines `interface`, a Drive field name.
 #include "alerts.hpp"
@@ -7,6 +8,7 @@
 #include "collect.hpp"
 #include "config.hpp"
 #include "gui_model.hpp"
+#include "tray_icon.hpp"
 #include "raid.hpp"
 #include "render.hpp"
 #include "silence.hpp"
@@ -32,11 +34,11 @@
 #include <libproc.h>
 #endif
 #endif
-#include <cmath>
 #include <ctime>
 #include <cstdio>
 #include <memory>
 #include <set>
+#include <vector>
 #include <thread>
 
 
@@ -53,27 +55,24 @@ static wxColour C(const std::string& hex) {
     return wxColour(c.r, c.g, c.b);
 }
 
-// Plain filled circle, exactly like VB TrayIcons.Circle: FillEllipse(2, 2, 28, 28) on a transparent
-// 32 px bitmap with SmoothingMode.AntiAlias. Colour is the exact palette RGB; only edge alpha varies.
-static wxBitmap circle_bitmap(const std::string& hex) {
-    namespace p = hdmon::palette;
-    wxColour c = C(hex);
-    const int size = p::ICON_SIZE;
+// App icon above a status circle, both with a black stroke. Colour is the exact palette RGB.
+static wxBitmap tray_bitmap(const std::string& hex) {
+    const int size = hdmon::palette::ICON_SIZE;
+    std::vector<unsigned char> px(static_cast<size_t>(size) * size * 4);
+    hdmon::tray::render(px.data(), size, hdmon::palette::to_rgb(hex.c_str()));
     wxImage img(size, size);
     img.InitAlpha();
-    const double r = p::CIRCLE_D / 2.0, cx = p::CIRCLE_X + r, cy = p::CIRCLE_Y + r;
     for (int y = 0; y < size; ++y)
         for (int x = 0; x < size; ++x) {
-            double dx = x + 0.5 - cx, dy = y + 0.5 - cy;
-            double a = std::min(1.0, std::max(0.0, r + 0.5 - std::sqrt(dx * dx + dy * dy)));
-            img.SetRGB(x, y, c.Red(), c.Green(), c.Blue());
-            img.SetAlpha(x, y, static_cast<unsigned char>(a * 255 + 0.5));
+            const unsigned char* p = px.data() + (y * size + x) * 4;
+            img.SetRGB(x, y, p[0], p[1], p[2]);
+            img.SetAlpha(x, y, p[3]);
         }
     return wxBitmap(img);
 }
-static wxIcon circle_icon(const std::string& status) {
+static wxIcon tray_icon(const std::string& status) {
     wxIcon ic;
-    ic.CopyFromBitmap(circle_bitmap(g::status_color(status)));
+    ic.CopyFromBitmap(tray_bitmap(g::status_color(status)));
     return ic;
 }
 static wxIcon app_icon() {
@@ -214,7 +213,7 @@ public:
     AlertDialog(const std::vector<Alert>& alerts)
         : wxDialog(nullptr, wxID_ANY, "Hard Drive Monitor", wxDefaultPosition, wxDefaultSize,
                    wxDEFAULT_DIALOG_STYLE | wxSTAY_ON_TOP) {
-        SetIcon(circle_icon("CRITICAL"));
+        SetIcon(tray_icon("CRITICAL"));
         auto* top = new wxBoxSizer(wxVERTICAL);
         auto* head = new wxPanel(this);
         head->SetBackgroundColour(C(g::status_color("CRITICAL")));
@@ -720,7 +719,7 @@ bool HdmonApp::OnInit() {
 
     if (wxTaskBarIcon::IsAvailable()) {
         tray_ = new TrayIcon();
-        tray_->SetIcon(circle_icon("UNKNOWN"),
+        tray_->SetIcon(tray_icon("UNKNOWN"),
                        U(silenced() ? g::tooltip_silenced(g::tooltip_scanning(GUI_VERSION)) : g::tooltip_scanning(GUI_VERSION)));
 #ifdef __WXMSW__
         wxNotificationMessage::UseTaskBarIcon(tray_);
@@ -871,10 +870,10 @@ void HdmonApp::Refresh() {
         const size_t limit = current_os() == OS::Windows ? 127 : 1000;
         const bool quiet = silenced();
         auto tip = [&](const std::string& t) { return U(quiet ? g::tooltip_silenced(t, limit) : t); };
-        if (scanning_ && !have_) tray_->SetIcon(circle_icon("UNKNOWN"), tip(g::tooltip_scanning(GUI_VERSION)));
-        else if (!last_.error.empty()) tray_->SetIcon(circle_icon("UNKNOWN"), tip(g::tooltip_failed(GUI_VERSION)));
+        if (scanning_ && !have_) tray_->SetIcon(tray_icon("UNKNOWN"), tip(g::tooltip_scanning(GUI_VERSION)));
+        else if (!last_.error.empty()) tray_->SetIcon(tray_icon("UNKNOWN"), tip(g::tooltip_failed(GUI_VERSION)));
         else if (have_)
-            tray_->SetIcon(circle_icon(g::tray_status(last_.results, last_.arrays)),
+            tray_->SetIcon(tray_icon(g::tray_status(last_.results, last_.arrays)),
                            tip(g::tooltip_text(last_.results, last_.arrays, GUI_VERSION, quiet ? std::string::npos : limit)));
     }
     if (frame_) frame_->ShowScan(last_.results, last_.arrays, have_, scanning_, StatusLine());
@@ -955,7 +954,7 @@ int main(int argc, char** argv) {
         if (a == "-h" || a == "--help") {
             std::printf("usage: hdmon-gui [--show] [--from-json FILE_OR_DIR]... [--config FILE] [--db FILE]\n"
                         "                 [--open options|about|details|raid|tray-menu] [--version]\n\n"
-                        "Hard Drive Monitor desktop app: tray icon in the worst drive's colour, drive list,\n"
+                        "Hard Drive Monitor desktop app: tray icon (app icon + status circle), drive list,\n"
                         "hourly background scans. The command-line tool is `hdmon`.\n");
             return 0;
         }
