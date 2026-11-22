@@ -168,7 +168,7 @@ behaviour on Windows, macOS and Linux. The `hdmon` command is unchanged; the app
 *Screenshots use the synthetic test drives (`hdmon-gui --from-json tests/fixtures`; the main window and RAID
 details use `tests/fixtures/raid/sample`) on Linux/GTK under Xvfb, regenerated with `tools/gui_screenshots.sh`. The Windows one is the cross-compiled exe running under Wine.*
 
-- **Tray icon:** the app icon inside a circle in the colour of the **worst** drive, both with a black stroke. Green = OK, yellow = WARNING, red =
+- **Tray icon** (0.2.12): the app icon inside a circle in the colour of the **worst** drive, both with a black stroke. Green = OK, yellow = WARNING, red =
   CRITICAL, gray = no data/no SMART. Statuses come from the same scoring as `hdmon status`. Hover to see each
   drive (letter, mount point or device) with its health %. Right-click (on macOS, click) for **Open, Scan Now,
   Options, About, Exit**. Double-click opens the window.
