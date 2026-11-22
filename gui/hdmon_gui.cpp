@@ -1,5 +1,5 @@
 // Hard Drive Monitor desktop app (hdmon-gui): C++/wxWidgets port of the VB.NET DiskMonitor tray app.
-// Tray: app icon above a status circle (worst drive's colour), both with a black stroke; drive list,
+// Tray: app icon inside a status circle (worst drive's colour), both with a black stroke; drive list,
 // Details, Options (incl. Updates), About,
 // danger alerts. Scanning, scoring, history, alerts, config and updates all come from hdmon_core.
 // hdmon headers first: <windows.h> (pulled in by wx) defines `interface`, a Drive field name.
@@ -55,7 +55,7 @@ static wxColour C(const std::string& hex) {
     return wxColour(c.r, c.g, c.b);
 }
 
-// App icon above a status circle, both with a black stroke. Colour is the exact palette RGB.
+// App icon centred inside a status circle, both with a black stroke. Colour is the exact palette RGB.
 static wxBitmap tray_bitmap(const std::string& hex) {
     const int size = hdmon::palette::ICON_SIZE;
     std::vector<unsigned char> px(static_cast<size_t>(size) * size * 4);
@@ -954,7 +954,7 @@ int main(int argc, char** argv) {
         if (a == "-h" || a == "--help") {
             std::printf("usage: hdmon-gui [--show] [--from-json FILE_OR_DIR]... [--config FILE] [--db FILE]\n"
                         "                 [--open options|about|details|raid|tray-menu] [--version]\n\n"
-                        "Hard Drive Monitor desktop app: tray icon (app icon + status circle), drive list,\n"
+                        "Hard Drive Monitor desktop app: tray icon (app icon inside a status circle), drive list,\n"
                         "hourly background scans. The command-line tool is `hdmon`.\n");
             return 0;
         }

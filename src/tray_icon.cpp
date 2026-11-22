@@ -126,32 +126,34 @@ void render_native(std::uint8_t* rgba, int size, palette::Rgb status) {
     std::memset(rgba, 0, static_cast<size_t>(size) * static_cast<size_t>(size) * 4);
     const int stroke = stroke_w(size);
     const int cd = circle_d(size);
-    const int slot_h = size - (cd + 2 * stroke);   // gap 0, no padding
-    int nw = 1, nh = 1;
-    if (slot_h > 2 * stroke) {
-        const int max_w = size - 2 * stroke;
-        const int max_h = slot_h - 2 * stroke;
-        if (max_w > 0 && max_h > 0) {
-            const double sc = std::min(static_cast<double>(max_w) / APP_ICON_W,
-                                       static_cast<double>(max_h) / APP_ICON_H);
-            nw = std::max(1, static_cast<int>(std::lround(APP_ICON_W * sc)));
-            nh = std::max(1, static_cast<int>(std::lround(APP_ICON_H * sc)));
-            while (nw + 2 * stroke > size || nh + 2 * stroke > slot_h) {
-                if (nw >= nh && nw > 1) --nw;
-                else if (nh > 1) --nh;
-                else break;
-            }
-        }
-        std::vector<std::uint8_t> scaled(static_cast<size_t>(nw) * nh * 4);
-        scale_rgba(APP_ICON_RGBA, APP_ICON_W, APP_ICON_H, scaled.data(), nw, nh);
-        const int ox = (size - nw) / 2;
-        const int oy = stroke;   // leave stroke room above the icon
-        blit_outlined(rgba, size, scaled.data(), nw, nh, ox, oy, stroke + 0.5);
-    }
     const double r = cd / 2.0;
     const double cx = size / 2.0;
-    const double cy = size - stroke - r;
+    const double cy = size / 2.0;
     fill_circle(rgba, size, cx, cy, r, stroke, status);
+
+    // Leave a ring of status colour between the circle fill edge and the
+    // stroked app icon (margin = stroke width).
+    const double r_inner = r - stroke;
+    if (r_inner <= stroke) return;
+
+    const double a = APP_ICON_W / 2.0, b = APP_ICON_H / 2.0, t = stroke;
+    const double A = a * a + b * b, B = 2 * t * (a + b), C = 2 * t * t - r_inner * r_inner;
+    const double disc = B * B - 4 * A * C;
+    const double s = disc > 0 ? (-B + std::sqrt(disc)) / (2 * A) : 0;
+    int nw = std::max(1, static_cast<int>(std::lround(APP_ICON_W * s)));
+    int nh = std::max(1, static_cast<int>(std::lround(APP_ICON_H * s)));
+    auto fits = [&](int w, int h) {
+        const double bw = w + 2 * stroke, bh = h + 2 * stroke;
+        return (bw / 2) * (bw / 2) + (bh / 2) * (bh / 2) <= r_inner * r_inner + 0.01;
+    };
+    while (!fits(nw, nh) && (nw > 1 || nh > 1)) {
+        if (nw >= nh && nw > 1) --nw;
+        else if (nh > 1) --nh;
+        else break;
+    }
+    std::vector<std::uint8_t> scaled(static_cast<size_t>(nw) * nh * 4);
+    scale_rgba(APP_ICON_RGBA, APP_ICON_W, APP_ICON_H, scaled.data(), nw, nh);
+    blit_outlined(rgba, size, scaled.data(), nw, nh, (size - nw) / 2, (size - nh) / 2, stroke + 0.5);
 }
 
 }  // namespace

@@ -195,12 +195,12 @@ TEST_CASE("palette: exact status colours are pinned") {
     CHECK(g::row_tint("CRITICAL") == p::ROW_CRITICAL);
     CHECK(g::status_color("") == p::STATUS_UNKNOWN);
     CHECK(g::row_tint("") == p::ROW_UNKNOWN);
-    // Tray icon geometry (app icon above a 10 px fill circle, 2 px black stroke, 32 px)
+    // Tray icon geometry (28 px fill circle, 2 px black stroke, app icon inside, 32 px)
     CHECK(p::ICON_SIZE == 32);
     CHECK(p::STROKE_W == 2);
-    CHECK(p::CIRCLE_X == 11);
-    CHECK(p::CIRCLE_Y == 20);
-    CHECK(p::CIRCLE_D == 10);
+    CHECK(p::CIRCLE_X == 2);
+    CHECK(p::CIRCLE_Y == 2);
+    CHECK(p::CIRCLE_D == 28);
 }
 
 TEST_CASE("RAID rows: array bold with arrow and state, members indented, raw disks not repeated") {

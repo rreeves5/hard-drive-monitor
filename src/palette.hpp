@@ -22,11 +22,12 @@ inline constexpr const char* ROW_UNKNOWN  = "#E4E6EA";
 
 inline constexpr const char* ROW_TEXT = "#000000";
 
-// Tray icon geometry at ICON_SIZE: app icon on top, filled status circle below, both
-// with a black stroke. CIRCLE_* is the fill ellipse (stroke sits outside it).
+// Tray icon geometry at ICON_SIZE: status circle nearly fills the canvas, app icon
+// centred inside it, both with a black stroke. CIRCLE_* is the fill ellipse
+// (stroke sits outside it).
 inline constexpr int ICON_SIZE = 32;
 inline constexpr int STROKE_W = 2;
-inline constexpr int CIRCLE_X = 11, CIRCLE_Y = 20, CIRCLE_D = 10;
+inline constexpr int CIRCLE_X = 2, CIRCLE_Y = 2, CIRCLE_D = 28;
 
 // "#RRGGBB" -> Rgb (constexpr so the tests can pin the exact numbers).
 constexpr int hex_nibble(char c) {
